@@ -1,6 +1,7 @@
 """Allowlisted local test runner."""
 
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from typing import Sequence
@@ -24,6 +25,8 @@ class TestRunner:
 
     def run(self, command: str | Sequence[str]) -> TestResult:
         argv = self.policy.enforce(command)
+        display_command = " ".join(argv)
+        argv = _resolve_executable(argv)
         started = time.monotonic()
         try:
             result = subprocess.run(
@@ -37,7 +40,7 @@ class TestRunner:
             )
             duration = time.monotonic() - started
             return TestResult(
-                command=" ".join(argv),
+                command=display_command,
                 passed=result.returncode == 0,
                 exit_code=result.returncode,
                 stdout=result.stdout,
@@ -47,7 +50,7 @@ class TestRunner:
         except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - started
             return TestResult(
-                command=" ".join(argv),
+                command=display_command,
                 passed=False,
                 exit_code=124,
                 stdout=exc.stdout or "",
@@ -57,10 +60,20 @@ class TestRunner:
         except OSError as exc:
             duration = time.monotonic() - started
             return TestResult(
-                command=" ".join(argv),
+                command=display_command,
                 passed=False,
                 exit_code=127,
                 stdout="",
                 stderr=str(exc),
                 duration_seconds=duration,
             )
+
+    def run_many(self, commands: Sequence[str | Sequence[str]]) -> list[TestResult]:
+        return [self.run(command) for command in commands]
+
+
+def _resolve_executable(argv: list[str]) -> list[str]:
+    found = shutil.which(argv[0])
+    if found is None:
+        return argv
+    return [str(Path(found).resolve()), *argv[1:]]

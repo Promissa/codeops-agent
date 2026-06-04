@@ -11,9 +11,12 @@ from codeops.core.models import TaskRequest
 from codeops.core.paths import RunPaths
 from codeops.core.state import create_task_state
 from codeops.retrieval.graph_reliability import GraphReliabilityLayer
+from codeops.retrieval.impact_envelope import ImpactEnvelopeBuilder
 from codeops.retrieval.repo_sketch import RepoSketchBuilder
 from codeops.tools.codegraph_gateway import CodeGraphGateway
 from codeops.tools.git_tool import GitTool
+from codeops.tools.test_runner import TestRunner
+from codeops.workflow.nodes import VerificationPlanBuilder
 
 app = typer.Typer(
     name="codeops",
@@ -84,7 +87,6 @@ def run(
         }
     )
     contract_path = writer.write_yaml("acceptance_contract", acceptance_contract)
-    task_path = writer.write_json("task", state)
 
     sketch_builder = RepoSketchBuilder()
     sketch = sketch_builder.build(request.repo_path, commit=commit)
@@ -109,10 +111,45 @@ def run(
     )
     graph_path = writer.write_json("graph_evidence", evidence)
 
+    affected_tests = _select_tests(issue_text, sketch.test_map)
+    impact_envelope = ImpactEnvelopeBuilder().build(
+        graph_evidence=evidence,
+        affected_tests=affected_tests,
+    )
+    impact_path = writer.write_yaml("impact_envelope", impact_envelope)
+
+    verification_builder = VerificationPlanBuilder()
+    verification_plan = verification_builder.build(impact_envelope)
+    verification_path = writer.write_yaml("verification_plan", verification_plan)
+    test_commands = verification_builder.commands(
+        verification_plan,
+        risk_level=impact_envelope.risk_level,
+    )
+    test_results = TestRunner(request.repo_path).run_many(test_commands)
+    test_results_path = writer.write_json("test_results", test_results)
+
+    if test_results:
+        state = state.model_copy(
+            update={
+                "impact_envelope": impact_envelope,
+                "verification_plan": verification_plan,
+                "test_results": test_results,
+                "status": (
+                    "tested"
+                    if acceptance_contract.status == "ready"
+                    else "needs_clarification"
+                ),
+            }
+        )
+    task_path = writer.write_json("task", state)
+
     typer.echo(f"wrote {task_path}")
     typer.echo(f"wrote {contract_path}")
     typer.echo(f"wrote {repo_sketch_path}")
     typer.echo(f"wrote {graph_path}")
+    typer.echo(f"wrote {impact_path}")
+    typer.echo(f"wrote {verification_path}")
+    typer.echo(f"wrote {test_results_path}")
 
 
 def _write_repo_sketch_cache(
@@ -124,6 +161,17 @@ def _write_repo_sketch_cache(
         sketch.model_dump_json(indent=2) + "\n"
     )
     (cache_dir / "repo_sketch.md").write_text(sketch_markdown)
+
+
+def _select_tests(issue_text: str, test_map: dict[str, list[str]]) -> list[str]:
+    issue_lower = issue_text.lower()
+    selected: list[str] = []
+    for source, tests in test_map.items():
+        source_lower = source.lower()
+        source_name = Path(source).stem.lower()
+        if source_name in issue_lower or ("csv" in issue_lower and "parser" in source_lower):
+            selected.extend(tests)
+    return list(dict.fromkeys(selected))
 
 
 def main() -> None:

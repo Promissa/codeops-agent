@@ -24,6 +24,7 @@ class ImpactEnvelopeBuilder:
         target_symbols: list[SymbolRef] | None = None,
         graph_evidence: GraphEvidence | None = None,
         fallback_files: list[str] | None = None,
+        affected_tests: list[str] | None = None,
         forbidden_changes: list[str] | None = None,
     ) -> ImpactEnvelope:
         symbols = target_symbols or []
@@ -38,9 +39,10 @@ class ImpactEnvelopeBuilder:
             ]
             + (fallback_files or [])
         )
-        affected_tests = (
+        graph_tests = (
             graph_evidence.affected_tests if graph_evidence is not None else []
         )
+        affected_tests = _dedupe([*graph_tests, *(affected_tests or [])])
         allowed_files = _dedupe([*affected_files, *affected_tests])
         high_risk = any(_is_high_risk(path) for path in allowed_files)
 
