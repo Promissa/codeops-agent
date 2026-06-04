@@ -6,6 +6,8 @@ from pathlib import Path
 
 ARTIFACT_FILENAMES = {
     "task": "task.json",
+    "repo_sketch": "repo_sketch.md",
+    "repo_sketch_json": "repo_sketch.json",
     "acceptance_contract": "acceptance_contract.yaml",
     "graph_evidence": "graph_evidence.json",
     "impact_envelope": "impact_envelope.yaml",
