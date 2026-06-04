@@ -1,0 +1,1 @@
+{"task_id":"csv_trailing_empty_column","repo_path":"examples/fixtures/mini_data_pipeline","issue_path":"examples/issues/csv_trailing_empty_column.md","expected_tests":["pytest tests/test_parser.py -q"]}

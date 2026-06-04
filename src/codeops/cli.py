@@ -6,6 +6,7 @@ from typing import Annotated
 import typer
 
 from codeops.core.models import TaskRequest
+from codeops.evals.runner import EvalRunner
 from codeops.workflow.orchestrator import WorkflowOrchestrator
 
 app = typer.Typer(
@@ -56,6 +57,39 @@ def run(
     request = TaskRequest(repo_path=repo, issue_path=issue, out_path=out)
     state = WorkflowOrchestrator().run(request)
     typer.echo(f"completed {state.task_id} with status {state.status}")
+
+
+@app.command("eval")
+def eval_command(
+    tasks: Annotated[
+        Path,
+        typer.Option(
+            "--tasks",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            resolve_path=True,
+            help="Path to eval task JSONL.",
+        ),
+    ],
+    mode: Annotated[
+        str,
+        typer.Option(
+            "--mode",
+            help="Eval mode.",
+        ),
+    ] = "repo_sketch_codegraph",
+    out_root: Annotated[
+        Path,
+        typer.Option(
+            "--out-root",
+            help="Directory where eval run artifacts are written.",
+        ),
+    ] = Path(".runs"),
+) -> None:
+    """Run evaluation tasks and write an eval report."""
+    report_path = EvalRunner().run(tasks_path=tasks, mode=mode, out_root=out_root)
+    typer.echo(f"wrote {report_path}")
 
 
 def main() -> None:
