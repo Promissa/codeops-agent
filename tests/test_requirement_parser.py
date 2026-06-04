@@ -77,6 +77,6 @@ def test_cli_writes_acceptance_contract(tmp_path):
     assert result.exit_code == 0, result.output
     task = json.loads((out / "task.json").read_text())
     contract_text = (out / "acceptance_contract.yaml").read_text()
-    assert task["status"] == "contracted"
+    assert task["status"] == "reviewed"
     assert task["acceptance_contract"]["status"] == "ready"
     assert 'summary: "parser issue"' in contract_text

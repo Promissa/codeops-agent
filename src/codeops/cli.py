@@ -5,6 +5,8 @@ from typing import Annotated
 
 import typer
 
+from codeops.agents.manifest_writer import ManifestWriter
+from codeops.agents.reviewer import Reviewer
 from codeops.agents.requirement_parser import RequirementParser
 from codeops.core.artifacts import ArtifactWriter
 from codeops.core.models import TaskRequest
@@ -128,19 +130,44 @@ def run(
     test_results = TestRunner(request.repo_path).run_many(test_commands)
     test_results_path = writer.write_json("test_results", test_results)
 
-    if test_results:
-        state = state.model_copy(
-            update={
-                "impact_envelope": impact_envelope,
-                "verification_plan": verification_plan,
-                "test_results": test_results,
-                "status": (
-                    "tested"
-                    if acceptance_contract.status == "ready"
-                    else "needs_clarification"
-                ),
-            }
-        )
+    state = state.model_copy(
+        update={
+            "graph_evidence": evidence,
+            "impact_envelope": impact_envelope,
+            "verification_plan": verification_plan,
+            "test_results": test_results,
+            "status": (
+                "tested"
+                if test_results and acceptance_contract.status == "ready"
+                else state.status
+            ),
+        }
+    )
+    review = Reviewer().review(state)
+    manifest_writer = ManifestWriter()
+    evidence_matrix_path = writer.write_markdown(
+        "evidence_matrix",
+        manifest_writer.evidence_matrix(state),
+    )
+    intent_manifest_path = writer.write_markdown(
+        "intent_manifest",
+        manifest_writer.intent_manifest(state, review),
+    )
+    final_report_path = writer.write_markdown(
+        "final_report",
+        manifest_writer.final_report(state, review),
+    )
+    state = state.model_copy(
+        update={
+            "evidence_matrix_path": evidence_matrix_path,
+            "intent_manifest_path": intent_manifest_path,
+            "status": (
+                "reviewed"
+                if acceptance_contract.status == "ready"
+                else "needs_clarification"
+            ),
+        }
+    )
     task_path = writer.write_json("task", state)
 
     typer.echo(f"wrote {task_path}")
@@ -150,6 +177,9 @@ def run(
     typer.echo(f"wrote {impact_path}")
     typer.echo(f"wrote {verification_path}")
     typer.echo(f"wrote {test_results_path}")
+    typer.echo(f"wrote {evidence_matrix_path}")
+    typer.echo(f"wrote {intent_manifest_path}")
+    typer.echo(f"wrote {final_report_path}")
 
 
 def _write_repo_sketch_cache(
