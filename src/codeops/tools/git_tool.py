@@ -20,8 +20,8 @@ class GitCommandResult(BaseModel):
 class GitTool:
     """Run a small set of deterministic git operations."""
 
-    def __init__(self, repo_path: Path, timeout_seconds: float = 30.0) -> None:
-        self.repo_path = repo_path.resolve()
+    def __init__(self, repo_path: Path | str, timeout_seconds: float = 30.0) -> None:
+        self.repo_path = Path(repo_path).resolve()
         self.timeout_seconds = timeout_seconds
 
     def current_commit(self) -> str | None:
