@@ -181,6 +181,27 @@ def test_patch_policy_rejects_public_api_signature_change():
     assert "public API signature change is not allowed" in result.violations
 
 
+def test_patch_policy_rejects_high_risk_path_without_approval():
+    patch = """diff --git a/src/auth/token.py b/src/auth/token.py
+--- a/src/auth/token.py
++++ b/src/auth/token.py
+@@ -1 +1 @@
+-old = True
++new = True
+"""
+
+    result = PatchPolicy().validate(
+        patch,
+        _envelope(allowed_files=["src/auth/token.py"]),
+    )
+
+    assert not result.allowed
+    assert (
+        "high-risk path requires human approval: src/auth/token.py"
+        in result.violations
+    )
+
+
 def _envelope(
     allowed_files: list[str],
     allow_dependency_change: bool = False,

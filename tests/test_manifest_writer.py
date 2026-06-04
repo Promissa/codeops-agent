@@ -46,3 +46,8 @@ def test_cli_writes_intent_manifest_and_evidence_matrix(tmp_path):
     assert "| R1 |" in evidence_matrix
     assert "pytest tests/test_parser.py -q" in evidence_matrix
     assert "# Final Report" in final_report
+    assert "## Safety Checks" in final_report
+    assert "- Command policy: passed" in final_report
+    assert "- Secret filter: passed" in final_report
+    assert "- High-risk paths: none touched" in final_report
+    assert "- CodeGraph version:" in final_report

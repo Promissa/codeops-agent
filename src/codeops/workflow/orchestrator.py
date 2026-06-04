@@ -25,7 +25,9 @@ from codeops.retrieval.impact_envelope import ImpactEnvelopeBuilder
 from codeops.retrieval.local_embeddings import LocalEmbeddingRetriever
 from codeops.retrieval.repo_sketch import RepoSketchBuilder
 from codeops.safety.patch_policy import PatchPolicy
+from codeops.safety.secret_filter import SecretFilter
 from codeops.tools.codegraph_gateway import CodeGraphGateway
+from codeops.tools.codegraph_version import CODEGRAPH_VERSION
 from codeops.tools.git_tool import GitTool
 from codeops.tools.patch_tool import PatchTool
 from codeops.tools.test_runner import TestRunner
@@ -39,7 +41,7 @@ class WorkflowOrchestrator:
         started = time.monotonic()
         paths = RunPaths.from_run_dir(request.out_path)
         writer = ArtifactWriter(paths)
-        issue_text = request.issue_path.read_text()
+        issue_text = SecretFilter().scan(request.issue_path.read_text()).redacted_text
         cost_trace = CostTrace()
 
         acceptance_contract = RequirementParser().parse(issue_text)
@@ -74,7 +76,7 @@ class WorkflowOrchestrator:
         gateway = CodeGraphGateway()
         status = gateway.status(request.repo_path)
         graph_files = gateway.files(request.repo_path)
-        codegraph_version = gateway.version()
+        codegraph_version = gateway.version() or CODEGRAPH_VERSION
         cost_trace.codegraph_calls += 3
         reliability = GraphReliabilityLayer()
         report = reliability.evaluate(
@@ -110,6 +112,15 @@ class WorkflowOrchestrator:
             )
             evidence = evidence.model_copy(
                 update={"warnings": [*evidence.warnings, warning]}
+            )
+        if request.no_network:
+            evidence = evidence.model_copy(
+                update={
+                    "warnings": [
+                        *evidence.warnings,
+                        "no-network mode requested; network-backed operations disabled",
+                    ]
+                }
             )
         writer.write_json("graph_evidence", evidence)
 

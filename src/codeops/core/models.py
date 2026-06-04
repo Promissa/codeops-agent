@@ -32,6 +32,7 @@ class TaskRequest(BaseModel):
     issue_path: Path
     out_path: Path
     retrieval_mode: str = "codegraph"
+    no_network: bool = False
 
 
 class AcceptanceExample(BaseModel):

@@ -59,6 +59,13 @@ def run(
             help="Retrieval mode.",
         ),
     ] = "codegraph",
+    no_network: Annotated[
+        bool,
+        typer.Option(
+            "--no-network",
+            help="Record that the run should avoid network-backed operations.",
+        ),
+    ] = False,
 ) -> None:
     """Create initial run artifacts for a task."""
     request = TaskRequest(
@@ -66,6 +73,7 @@ def run(
         issue_path=issue,
         out_path=out,
         retrieval_mode=retrieval,
+        no_network=no_network,
     )
     state = WorkflowOrchestrator().run(request)
     typer.echo(f"completed {state.task_id} with status {state.status}")

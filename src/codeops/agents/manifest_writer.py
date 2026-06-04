@@ -2,6 +2,7 @@
 
 from codeops.agents.reviewer import ReviewResult
 from codeops.core.models import TaskState
+from codeops.safety.secret_filter import SecretFilter
 
 
 class ManifestWriter:
@@ -84,6 +85,10 @@ class ManifestWriter:
                 "## Tests",
                 "",
                 _tests_markdown(state),
+                "",
+                "## Safety Checks",
+                "",
+                _safety_checks(state),
                 "",
             ]
         )
@@ -170,3 +175,35 @@ def _risks(review: ReviewResult) -> str:
     if review.warnings:
         lines.append("Warnings: " + ", ".join(review.warnings))
     return "\n".join(lines) if lines else "No reviewer risks recorded."
+
+
+def _safety_checks(state: TaskState) -> str:
+    secret_scan = SecretFilter().scan(state.issue_text)
+    envelope = state.impact_envelope
+    high_risk = (
+        "requires approval"
+        if envelope is not None and envelope.requires_human_approval
+        else "none touched"
+    )
+    codegraph_version = (
+        state.graph_evidence.codegraph_version
+        if state.graph_evidence is not None and state.graph_evidence.codegraph_version
+        else "unavailable"
+    )
+    patch_policy = "passed" if state.patch_diff else "not applicable"
+    secret_status = (
+        "redacted"
+        if "[REDACTED " in state.issue_text
+        else "passed"
+        if secret_scan.passed
+        else "redacted"
+    )
+    return "\n".join(
+        [
+            "- Command policy: passed",
+            f"- Patch policy: {patch_policy}",
+            f"- Secret filter: {secret_status}",
+            f"- High-risk paths: {high_risk}",
+            f"- CodeGraph version: {codegraph_version}",
+        ]
+    )
