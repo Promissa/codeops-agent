@@ -5,7 +5,10 @@ from typing import Annotated
 
 import typer
 
+from codeops.core.artifacts import ArtifactWriter
 from codeops.core.models import TaskRequest
+from codeops.core.paths import RunPaths
+from codeops.core.state import create_task_state
 
 app = typer.Typer(
     name="codeops",
@@ -51,9 +54,18 @@ def run(
         ),
     ],
 ) -> None:
-    """Validate Phase 0 inputs and echo the task request."""
+    """Create the initial run artifact for a task."""
     request = TaskRequest(repo_path=repo, issue_path=issue, out_path=out)
-    typer.echo(request.model_dump_json(indent=2))
+    paths = RunPaths.from_run_dir(request.out_path)
+    state = create_task_state(
+        task_id=paths.task_id,
+        repo_path=request.repo_path,
+        issue_path=request.issue_path,
+        issue_text=request.issue_path.read_text(),
+        run_dir=paths.run_dir,
+    )
+    task_path = ArtifactWriter(paths).write_json("task", state)
+    typer.echo(f"wrote {task_path}")
 
 
 def main() -> None:
