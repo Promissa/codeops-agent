@@ -1,7 +1,42 @@
 [project]
 name = "codeops-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Evidence-aware CodeOps Agent"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pydantic>=2.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+rich = [
+    "rich>=13.0",
+]
+
+[project.scripts]
+codeops = "codeops.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "src",
+]
+testpaths = [
+    "tests",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/codeops",
+]
+
+[build-system]
+requires = [
+    "hatchling",
+]
+build-backend = "hatchling.build"
