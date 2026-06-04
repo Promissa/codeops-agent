@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from codeops.agents.requirement_parser import RequirementParser
 from codeops.core.artifacts import ArtifactWriter
 from codeops.core.models import TaskRequest
 from codeops.core.paths import RunPaths
@@ -64,13 +65,25 @@ def run(
     writer = ArtifactWriter(paths)
     git = GitTool(request.repo_path)
     commit = git.current_commit()
+    issue_text = request.issue_path.read_text()
+    acceptance_contract = RequirementParser().parse(issue_text)
     state = create_task_state(
         task_id=paths.task_id,
         repo_path=request.repo_path,
         issue_path=request.issue_path,
-        issue_text=request.issue_path.read_text(),
+        issue_text=issue_text,
         run_dir=paths.run_dir,
+    ).model_copy(
+        update={
+            "acceptance_contract": acceptance_contract,
+            "status": (
+                "contracted"
+                if acceptance_contract.status == "ready"
+                else "needs_clarification"
+            ),
+        }
     )
+    contract_path = writer.write_yaml("acceptance_contract", acceptance_contract)
     task_path = writer.write_json("task", state)
 
     sketch_builder = RepoSketchBuilder()
@@ -97,6 +110,7 @@ def run(
     graph_path = writer.write_json("graph_evidence", evidence)
 
     typer.echo(f"wrote {task_path}")
+    typer.echo(f"wrote {contract_path}")
     typer.echo(f"wrote {repo_sketch_path}")
     typer.echo(f"wrote {graph_path}")
 
