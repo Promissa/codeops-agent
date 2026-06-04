@@ -37,6 +37,7 @@ def test_task_request_serializes_paths():
         "repo_path": "examples/fixtures/mini_data_pipeline",
         "issue_path": "examples/issues/csv_trailing_empty_column.md",
         "out_path": ".runs/demo_csv_bug",
+        "retrieval_mode": "codegraph",
     }
     assert TaskRequest.model_validate(payload) == request
 

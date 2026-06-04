@@ -22,6 +22,7 @@ from codeops.core.paths import RunPaths
 from codeops.core.state import create_task_state
 from codeops.retrieval.graph_reliability import GraphReliabilityLayer
 from codeops.retrieval.impact_envelope import ImpactEnvelopeBuilder
+from codeops.retrieval.local_embeddings import LocalEmbeddingRetriever
 from codeops.retrieval.repo_sketch import RepoSketchBuilder
 from codeops.safety.patch_policy import PatchPolicy
 from codeops.tools.codegraph_gateway import CodeGraphGateway
@@ -96,6 +97,20 @@ class WorkflowOrchestrator:
                 "affected_tests": affected_tests,
             }
         )
+        if request.retrieval_mode == "hybrid_local":
+            capsules, embedded = LocalEmbeddingRetriever().index(
+                request.repo_path,
+                request.repo_path / ".codeops" / "local_embeddings.sqlite",
+            )
+            warning = (
+                f"hybrid_local indexed {len(capsules)} symbol capsules"
+                if embedded
+                else "hybrid_local embedding provider unavailable; "
+                "fell back to CodeGraph and deterministic retrieval"
+            )
+            evidence = evidence.model_copy(
+                update={"warnings": [*evidence.warnings, warning]}
+            )
         writer.write_json("graph_evidence", evidence)
 
         impact_envelope = ImpactEnvelopeBuilder().build(

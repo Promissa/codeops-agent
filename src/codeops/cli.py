@@ -52,9 +52,21 @@ def run(
             help="Path where a future workflow run will write artifacts.",
         ),
     ],
+    retrieval: Annotated[
+        str,
+        typer.Option(
+            "--retrieval",
+            help="Retrieval mode.",
+        ),
+    ] = "codegraph",
 ) -> None:
     """Create initial run artifacts for a task."""
-    request = TaskRequest(repo_path=repo, issue_path=issue, out_path=out)
+    request = TaskRequest(
+        repo_path=repo,
+        issue_path=issue,
+        out_path=out,
+        retrieval_mode=retrieval,
+    )
     state = WorkflowOrchestrator().run(request)
     typer.echo(f"completed {state.task_id} with status {state.status}")
 

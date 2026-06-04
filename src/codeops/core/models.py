@@ -31,6 +31,7 @@ class TaskRequest(BaseModel):
     repo_path: Path
     issue_path: Path
     out_path: Path
+    retrieval_mode: str = "codegraph"
 
 
 class AcceptanceExample(BaseModel):
