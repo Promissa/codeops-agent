@@ -6,10 +6,17 @@ from codeops.core.models import AcceptanceContract, AcceptanceExample
 SECTION_LABELS = {
     "bug": "bug",
     "summary": "bug",
+    "issue description": "bug",
     "reproduction": "reproduction",
     "repro": "reproduction",
+    "step-by-step reproduction": "reproduction",
+    "steps to reproduce": "reproduction",
     "expected": "expected",
+    "expected behavior": "expected",
     "actual": "actual",
+    "actual behavior": "actual",
+    "relevant log output": "actual",
+    "logs": "actual",
     "invariants": "invariants",
     "invariant": "invariants",
     "non-goals": "non_goals",
@@ -27,7 +34,7 @@ class RequirementParser:
         requirement_id: str = "R1",
     ) -> AcceptanceContract:
         sections = _sections(issue_text)
-        expected = sections.get("expected", "").strip()
+        expected = _expected_behavior(sections)
         reproduction = sections.get("reproduction", "").strip()
 
         ambiguity_questions = []
@@ -67,6 +74,11 @@ def _sections(issue_text: str) -> dict[str, str]:
 
 
 def _split_label(line: str) -> tuple[str | None, str]:
+    heading = line.strip().lstrip("#").strip()
+    normalized_heading = heading.lower()
+    if normalized_heading in SECTION_LABELS:
+        return SECTION_LABELS[normalized_heading], ""
+
     if ":" not in line:
         return None, ""
     possible_label, value = line.split(":", maxsplit=1)
@@ -87,6 +99,10 @@ def _summary(issue_text: str, sections: dict[str, str]) -> str:
 def _first_content_line(text: str) -> str:
     for line in text.splitlines():
         stripped = line.strip(" `")
+        if stripped.lower() in {"hello.", "hello"}:
+            continue
+        if stripped.lower().startswith(("i will re-post", "i will repost")):
+            continue
         if stripped:
             return stripped
     return "Unspecified requirement"
@@ -106,3 +122,12 @@ def _list_section(text: str) -> list[str]:
             continue
         items.append(stripped.removeprefix("-").strip())
     return items
+
+
+def _expected_behavior(sections: dict[str, str]) -> str:
+    expected = sections.get("expected", "").strip()
+    if expected:
+        return expected
+    if sections.get("reproduction", "").strip() and sections.get("actual", "").strip():
+        return "The documented reproduction should complete without the logged failure."
+    return ""

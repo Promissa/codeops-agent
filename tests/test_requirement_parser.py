@@ -53,6 +53,34 @@ Actual: IndexError.
     ]
 
 
+def test_requirement_parser_handles_github_issue_sections():
+    issue = """### Issue description
+
+Hello.
+I will re-post the issue so that it can be prioritized.
+HETERO GPU pipeline crashes during VLM inference.
+
+### Step-by-step reproduction
+
+Run the model with `HETERO:GPU.0,GPU.1`.
+
+### Relevant log output
+
+```shell
+[GPU] clEnqueueWriteBuffer, error code: -5 CL_OUT_OF_RESOURCES
+```
+"""
+
+    contract = RequirementParser().parse(issue)
+
+    assert contract.status == "ready"
+    assert contract.summary == "HETERO GPU pipeline crashes during VLM inference."
+    assert contract.user_visible_after == (
+        "The documented reproduction should complete without the logged failure."
+    )
+    assert "CL_OUT_OF_RESOURCES" in contract.user_visible_before
+
+
 def test_cli_writes_acceptance_contract(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -80,3 +108,30 @@ def test_cli_writes_acceptance_contract(tmp_path):
     assert task["status"] == "reviewed"
     assert task["acceptance_contract"]["status"] == "ready"
     assert 'summary: "parser issue"' in contract_text
+
+
+def test_cli_stops_before_tests_when_contract_needs_clarification(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "parser.py").write_text("def parse_csv(text):\n    return []\n")
+    issue = tmp_path / "issue.md"
+    issue.write_text("Bug: parser issue\nActual: fail\n")
+    out = tmp_path / ".runs" / "needs_clarification_demo"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--repo",
+            str(repo),
+            "--issue",
+            str(issue),
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    task = json.loads((out / "task.json").read_text())
+    assert task["status"] == "needs_clarification"
+    assert task["test_results"] == []

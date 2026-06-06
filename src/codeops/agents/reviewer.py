@@ -53,7 +53,7 @@ class Reviewer:
         else:
             warnings.append("no patch diff is present")
 
-        if not state.test_results:
+        if not state.test_results and state.patch_diff:
             violations.append("missing test results")
         failed_tests = [result.command for result in state.test_results if not result.passed]
         if failed_tests:

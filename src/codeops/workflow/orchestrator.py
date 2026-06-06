@@ -174,6 +174,8 @@ class WorkflowOrchestrator:
                     )
             except ToolError:
                 patch_diff = None
+        else:
+            writer.write_markdown("patch_plan", "")
 
         if patch_diff:
             writer.write_markdown("patch", patch_diff)
@@ -191,10 +193,12 @@ class WorkflowOrchestrator:
         else:
             writer.write_markdown("patch", "")
 
-        commands = verification_builder.commands(
-            verification_plan,
-            risk_level=impact_envelope.risk_level,
-        )
+        commands = []
+        if patch_diff and state.status != "failed":
+            commands = verification_builder.commands(
+                verification_plan,
+                risk_level=impact_envelope.risk_level,
+            )
         test_results = TestRunner(request.repo_path).run_many(commands)
         cost_trace.test_runs += len(test_results)
         cost_trace.tool_calls += len(test_results)
@@ -203,7 +207,7 @@ class WorkflowOrchestrator:
         if state.status != "failed":
             if any(not result.passed for result in test_results):
                 state = state.model_copy(update={"status": "failed"})
-            elif acceptance_contract.status == "ready":
+            elif test_results and acceptance_contract.status == "ready":
                 state = state.model_copy(update={"status": "tested"})
 
         state = state.model_copy(
@@ -218,6 +222,8 @@ class WorkflowOrchestrator:
         )
 
         review = Reviewer().review(state)
+        if state.status not in {"failed", "needs_clarification"}:
+            state = state.model_copy(update={"status": "reviewed"})
         manifest_writer = ManifestWriter()
         evidence_matrix_path = writer.write_markdown(
             "evidence_matrix",
@@ -229,8 +235,6 @@ class WorkflowOrchestrator:
         )
         writer.write_markdown("final_report", manifest_writer.final_report(state, review))
 
-        if state.status not in {"failed", "needs_clarification"}:
-            state = state.model_copy(update={"status": "reviewed"})
         state = state.model_copy(
             update={
                 "evidence_matrix_path": evidence_matrix_path,
