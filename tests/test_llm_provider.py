@@ -7,12 +7,23 @@ from codeops.agents.llm_provider import (
     KIMI_BASE_URL,
     KIMI_CODE_BASE_URL,
     LLMProviderConfig,
+    OpenAICompatibleRoutingProvider,
     OpenAICompatiblePatchProvider,
     extract_unified_diff,
     llm_config_from_request,
 )
+from codeops.agents.issue_router import IssueRoutingResult, RoutingCandidate
 from codeops.core.errors import ToolError
-from codeops.core.models import AcceptanceContract, ImpactEnvelope, PatchPlan, SymbolRef, TaskRequest
+from codeops.core.models import (
+    AcceptanceContract,
+    ImpactEnvelope,
+    ModuleCapsule,
+    PatchPlan,
+    ProjectProfile,
+    RepoSketch,
+    SymbolRef,
+    TaskRequest,
+)
 
 
 def test_kimi_config_defaults_to_moonshot_endpoint(monkeypatch):
@@ -108,6 +119,77 @@ def test_provider_blocks_secret_context(tmp_path, monkeypatch):
 
     with pytest.raises(ToolError, match="secret detected"):
         provider.generate_patch(repo, _plan(), _contract(), _envelope())
+
+
+def test_openai_compatible_routing_provider_parses_component_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-key-for-kimi")
+    calls = []
+
+    def transport(url, headers, payload, timeout_seconds):
+        calls.append((url, headers, payload, timeout_seconds))
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"components":["src/plugins/intel_gpu"],'
+                            '"files":["src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp"],'
+                            '"tests":[],"query_terms":["ocl","intel_gpu"],'
+                            '"confidence":0.87,"rationale":"log path points to ocl_memory"}'
+                        )
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 20},
+        }
+
+    provider = OpenAICompatibleRoutingProvider(
+        LLMProviderConfig(
+            provider="kimi-code",
+            model="kimi-k2.6",
+            base_url=KIMI_CODE_BASE_URL,
+            api_key_env="KIMI_API_KEY",
+        ),
+        transport=transport,
+    )
+
+    result = provider.enrich_routing(
+        repo_path=tmp_path,
+        issue_text="GPU CL_OUT_OF_RESOURCES",
+        project_profile=ProjectProfile(repo_path=tmp_path, primary_language="C++"),
+        repo_sketch=RepoSketch(
+            repo_root=tmp_path,
+            commit=None,
+            languages=["C++"],
+            frameworks=[],
+            entrypoints=[],
+            core_modules=[
+                ModuleCapsule(
+                    name="intel_gpu",
+                    path="src/plugins/intel_gpu",
+                    responsibility="GPU plugin.",
+                )
+            ],
+            test_commands=[],
+            test_map={},
+            high_risk_paths=[],
+        ),
+        deterministic_result=IssueRoutingResult(
+            source="deterministic",
+            candidates=[
+                RoutingCandidate(
+                    path="src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp",
+                    score=100,
+                )
+            ],
+        ),
+    )
+
+    assert result.files == ["src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp"]
+    assert result.components == ["src/plugins/intel_gpu"]
+    assert result.llm_input_tokens == 50
+    assert calls[0][0] == f"{KIMI_CODE_BASE_URL}/chat/completions"
+    assert "Deterministic candidates JSON" in calls[0][2]["messages"][1]["content"]
 
 
 def test_extract_unified_diff_handles_plain_and_fenced_output():

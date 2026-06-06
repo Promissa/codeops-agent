@@ -5,9 +5,11 @@ import time
 
 from codeops.agents.manifest_writer import ManifestWriter
 from codeops.agents.llm_provider import (
+    OpenAICompatibleRoutingProvider,
     OpenAICompatiblePatchProvider,
     llm_config_from_request,
 )
+from codeops.agents.issue_router import IssueRouter, routing_symbols
 from codeops.agents.patch_generator import PatchGenerator
 from codeops.agents.patch_planner import PatchPlanner
 from codeops.agents.requirement_parser import RequirementParser
@@ -86,20 +88,43 @@ class WorkflowOrchestrator:
         codegraph_version = gateway.version() or CODEGRAPH_VERSION
         cost_trace.codegraph_calls += 3
         reliability = GraphReliabilityLayer()
+        issue_router = IssueRouter()
+        routing = issue_router.route(
+            repo_path=request.repo_path,
+            issue_text=issue_text,
+            project_profile=project_profile,
+            repo_sketch=sketch,
+            graph_files=graph_files,
+            provider=_llm_routing_provider(request),
+        )
+        cost_trace.llm_calls += routing.llm_calls
+        cost_trace.llm_input_tokens += routing.llm_input_tokens
+        cost_trace.llm_output_tokens += routing.llm_output_tokens
+        writer.write_json("issue_routing", routing)
+
+        cross_checks = _routing_cross_checks(routing)
         report = reliability.evaluate(
             repo_path=request.repo_path,
             status=status,
             graph_files=graph_files,
-            cross_checks=_fallback_cross_checks(issue_text, sketch.core_modules),
+            cross_checks=cross_checks,
         )
-        target_symbols = _target_symbols(issue_text, sketch.core_modules)
-        affected_tests = _select_tests(issue_text, sketch.test_map)
+        target_symbols = routing_symbols(routing) or _target_symbols(
+            issue_text,
+            sketch.core_modules,
+        )
+        fallback_tests = _select_tests(issue_text, sketch.test_map)
+        affected_tests = (
+            routing.tests
+            or _tests_for_routed_files(routing.files, sketch.test_map)
+            or ([] if routing.files else fallback_tests)
+        )
         evidence = reliability.graph_evidence(
             status=status,
             report=report,
             repo_commit=commit,
             codegraph_version=codegraph_version,
-            cross_checks=_fallback_cross_checks(issue_text, sketch.core_modules),
+            cross_checks=cross_checks,
         ).model_copy(
             update={
                 "target_symbols": target_symbols,
@@ -133,6 +158,10 @@ class WorkflowOrchestrator:
         if llm_warning:
             evidence = evidence.model_copy(
                 update={"warnings": [*evidence.warnings, llm_warning]}
+            )
+        if routing.warnings:
+            evidence = evidence.model_copy(
+                update={"warnings": [*evidence.warnings, *routing.warnings]}
             )
         writer.write_json("graph_evidence", evidence)
 
@@ -289,6 +318,17 @@ def _select_tests(issue_text: str, test_map: dict[str, list[str]]) -> list[str]:
     return list(dict.fromkeys(selected))
 
 
+def _tests_for_routed_files(
+    routed_files: list[str], test_map: dict[str, list[str]]
+) -> list[str]:
+    routed = set(routed_files)
+    selected = []
+    for source, tests in test_map.items():
+        if source in routed:
+            selected.extend(tests)
+    return list(dict.fromkeys(selected))
+
+
 def _fallback_cross_checks(
     issue_text: str, modules: list[ModuleCapsule]
 ) -> list[CrossCheckResult]:
@@ -318,6 +358,27 @@ def _fallback_cross_checks(
     ]
 
 
+def _routing_cross_checks(routing: object) -> list[CrossCheckResult]:
+    if getattr(routing, "files", None):
+        return [
+            CrossCheckResult(
+                source="issue_router",
+                status="pass",
+                detail=(
+                    "IssueRouter selected candidate files: "
+                    + ", ".join(getattr(routing, "files")[:3])
+                ),
+            )
+        ]
+    return [
+        CrossCheckResult(
+            source="issue_router",
+            status="unknown",
+            detail="IssueRouter found no candidate files.",
+        )
+    ]
+
+
 def _llm_patch_provider(request: TaskRequest) -> OpenAICompatiblePatchProvider | None:
     if request.no_network:
         return None
@@ -328,6 +389,18 @@ def _llm_patch_provider(request: TaskRequest) -> OpenAICompatiblePatchProvider |
     if config is None or config.api_key is None:
         return None
     return OpenAICompatiblePatchProvider(config)
+
+
+def _llm_routing_provider(request: TaskRequest) -> OpenAICompatibleRoutingProvider | None:
+    if request.no_network:
+        return None
+    try:
+        config = llm_config_from_request(request)
+    except ToolError:
+        return None
+    if config is None or config.api_key is None:
+        return None
+    return OpenAICompatibleRoutingProvider(config)
 
 
 def _llm_warning(request: TaskRequest) -> str | None:

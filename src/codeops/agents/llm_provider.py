@@ -15,8 +15,11 @@ from codeops.core.models import (
     AcceptanceContract,
     ImpactEnvelope,
     PatchPlan,
+    ProjectProfile,
+    RepoSketch,
     TaskRequest,
 )
+from codeops.agents.issue_router import IssueRoutingResult
 from codeops.safety.secret_filter import SecretFilter
 
 
@@ -176,6 +179,85 @@ class OpenAICompatiblePatchProvider:
         )
 
 
+class OpenAICompatibleRoutingProvider:
+    """Infer likely components through an OpenAI-compatible chat completions API."""
+
+    def __init__(
+        self,
+        config: LLMProviderConfig,
+        transport: Transport | None = None,
+    ) -> None:
+        self.config = config
+        self._transport = transport or _post_json
+
+    def enrich_routing(
+        self,
+        *,
+        repo_path: Path,
+        issue_text: str,
+        project_profile: ProjectProfile,
+        repo_sketch: RepoSketch,
+        deterministic_result: IssueRoutingResult,
+    ) -> IssueRoutingResult:
+        api_key = self.config.api_key
+        if not api_key:
+            raise ToolError(
+                f"LLM API key env var is not set: {self.config.api_key_env}"
+            )
+        user_prompt = _routing_prompt(
+            issue_text=issue_text,
+            project_profile=project_profile,
+            repo_sketch=repo_sketch,
+            deterministic_result=deterministic_result,
+        )
+        scan = SecretFilter().scan(user_prompt)
+        if not scan.passed:
+            raise ToolError("secret detected in LLM routing context")
+
+        response = self._transport(
+            _chat_completions_url(self.config.base_url),
+            {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            {
+                "model": self.config.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You route software issues to likely components. "
+                            "Return strict JSON only. Prefer files from the "
+                            "candidate list. Do not invent large refactors."
+                        ),
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0,
+                "max_completion_tokens": min(
+                    self.config.max_completion_tokens,
+                    2048,
+                ),
+            },
+            self.config.timeout_seconds,
+        )
+        parsed = _json_from_content(_response_content(response))
+        usage = response.get("usage", {}) if isinstance(response, dict) else {}
+        return IssueRoutingResult(
+            source="llm",
+            components=_string_list(parsed.get("components")),
+            files=_string_list(parsed.get("files")),
+            tests=_string_list(parsed.get("tests")),
+            query_terms=_string_list(parsed.get("query_terms")),
+            candidates=deterministic_result.candidates,
+            confidence=_float(parsed.get("confidence")),
+            rationale=str(parsed.get("rationale", "")),
+            llm_input_tokens=_int(usage.get("prompt_tokens")),
+            llm_output_tokens=_int(usage.get("completion_tokens")),
+            llm_calls=1,
+        )
+
+
 def extract_unified_diff(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -242,6 +324,43 @@ def _context_files(
     return list(dict.fromkeys(impact_envelope.allowed_files))
 
 
+def _routing_prompt(
+    *,
+    issue_text: str,
+    project_profile: ProjectProfile,
+    repo_sketch: RepoSketch,
+    deterministic_result: IssueRoutingResult,
+) -> str:
+    candidates = [
+        {
+            "path": candidate.path,
+            "score": candidate.score,
+            "reasons": candidate.reasons[:4],
+        }
+        for candidate in deterministic_result.candidates[:80]
+    ]
+    modules = [
+        {
+            "name": module.name,
+            "path": module.path,
+            "symbols": module.public_symbols[:10],
+            "risk": module.risk,
+        }
+        for module in repo_sketch.core_modules[:80]
+    ]
+    return "\n\n".join(
+        [
+            "Infer likely suspected components/files for this issue.",
+            "Return JSON with keys: components, files, tests, query_terms, confidence, rationale.",
+            "Files must be repository-relative paths. Prefer candidate paths when possible.",
+            f"ProjectProfile JSON:\n{project_profile.model_dump_json(indent=2)}",
+            f"RepoSketch modules JSON:\n{json.dumps(modules, indent=2)}",
+            f"Deterministic candidates JSON:\n{json.dumps(candidates, indent=2)}",
+            f"Issue text:\n{issue_text[:20000]}",
+        ]
+    )
+
+
 def _post_json(
     url: str,
     headers: dict[str, str],
@@ -293,6 +412,36 @@ def _response_content(response: dict[str, Any]) -> str:
             if isinstance(item, dict)
         )
     return ""
+
+
+def _json_from_content(content: str) -> dict[str, Any]:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise ToolError("LLM routing response did not contain valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise ToolError("LLM routing response JSON must be an object")
+    return parsed
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _float(value: Any) -> float:
+    if isinstance(value, int | float):
+        return max(0.0, min(1.0, float(value)))
+    return 0.0
 
 
 def _first_value(explicit: str | None, *env_names: str) -> str | None:

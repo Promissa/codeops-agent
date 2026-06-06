@@ -135,3 +135,51 @@ def test_cli_stops_before_tests_when_contract_needs_clarification(tmp_path):
     task = json.loads((out / "task.json").read_text())
     assert task["status"] == "needs_clarification"
     assert task["test_results"] == []
+
+
+def test_cli_routes_github_issue_to_source_components(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src/plugins/intel_gpu/src/runtime/ocl").mkdir(parents=True)
+    (repo / "src/plugins/hetero/src").mkdir(parents=True)
+    (repo / "docs/articles_en/assets/snippets").mkdir(parents=True)
+    (repo / "src/openarc").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp").write_text("// gpu\n")
+    (repo / "src/plugins/hetero/src/compiled_model.cpp").write_text("// hetero\n")
+    (repo / "docs/articles_en/assets/snippets/main.py").write_text("def main(): pass\n")
+    (repo / "src/openarc/pipeline.py").write_text("def run(): pass\n")
+    (repo / "tests/test_pipeline.py").write_text("def test_pipeline(): pass\n")
+    issue = tmp_path / "issue.md"
+    issue.write_text(
+        "### Issue description\n"
+        "HETERO GPU.0,GPU.1 VLM pipeline fails.\n\n"
+        "### Step-by-step reproduction\n"
+        "Run with HETERO:GPU.0,GPU.1.\n\n"
+        "### Relevant log output\n"
+        "Exception from src\\plugins\\intel_gpu\\src\\runtime\\ocl\\ocl_memory.cpp:148:\n"
+        "[GPU] clEnqueueWriteBuffer, error code: -5 CL_OUT_OF_RESOURCES\n"
+        "Exception from src\\plugins\\hetero\\src\\compiled_model.cpp:36:\n"
+    )
+    out = tmp_path / ".runs" / "routing_demo"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "run",
+            "--repo",
+            str(repo),
+            "--issue",
+            str(issue),
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    routing = json.loads((out / "issue_routing.json").read_text())
+    impact = (out / "impact_envelope.yaml").read_text()
+    assert "src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp" in routing["files"]
+    assert "src/plugins/hetero/src/compiled_model.cpp" in routing["files"]
+    assert "docs/articles_en/assets/snippets/main.py" not in routing["files"]
+    assert "src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp" in impact
+    assert "tests/test_pipeline.py" not in impact
