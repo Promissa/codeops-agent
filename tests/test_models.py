@@ -15,6 +15,7 @@ from codeops.core.models import (
     PatchPlan,
     RepoSketch,
     SymbolRef,
+    TestCommand,
     TaskRequest,
     TaskState,
     TestResult as CodeOpsTestResult,
@@ -199,10 +200,50 @@ def _task_state(run_dir: Path = Path(".runs/demo_csv_bug")) -> TaskState:
             risk_notes=[],
         ),
         verification_plan=VerificationPlan(
-            acceptance_tests=["tests/test_parser.py::test_trailing_empty_column"],
-            affected_tests=["tests/test_parser.py"],
-            module_tests=["tests/test_parser.py"],
-            full_tests=["pytest -q"],
+            acceptance_tests=[
+                TestCommand(
+                    id="pytest_acceptance_parser_trailing_empty",
+                    command=[
+                        "pytest",
+                        "tests/test_parser.py::test_trailing_empty_column",
+                        "-q",
+                    ],
+                    cwd=Path("examples/fixtures/mini_data_pipeline"),
+                    scope="acceptance",
+                    language="Python",
+                    parse_format="pytest",
+                )
+            ],
+            affected_tests=[
+                TestCommand(
+                    id="pytest_affected_parser",
+                    command=["pytest", "tests/test_parser.py", "-q"],
+                    cwd=Path("examples/fixtures/mini_data_pipeline"),
+                    scope="affected",
+                    language="Python",
+                    parse_format="pytest",
+                )
+            ],
+            module_tests=[
+                TestCommand(
+                    id="pytest_module_parser",
+                    command=["pytest", "tests/test_parser.py", "-q"],
+                    cwd=Path("examples/fixtures/mini_data_pipeline"),
+                    scope="module",
+                    language="Python",
+                    parse_format="pytest",
+                )
+            ],
+            full_tests=[
+                TestCommand(
+                    id="pytest_full",
+                    command=["pytest", "-q"],
+                    cwd=Path("examples/fixtures/mini_data_pipeline"),
+                    scope="full",
+                    language="Python",
+                    parse_format="pytest",
+                )
+            ],
             static_checks=[],
             behavior_diff_required=True,
             coverage_required=False,

@@ -13,14 +13,14 @@ from codeops.tools.ripgrep_tool import RipgrepTool
 def test_command_policy_allows_mvp_commands():
     policy = CommandPolicy()
 
-    assert policy.validate("pytest tests/test_parser.py -q").allowed
+    assert policy.validate(["pytest", "tests/test_parser.py", "-q"]).allowed
     assert policy.validate(["python", "-m", "pytest", "-q"]).allowed
-    assert policy.validate("ruff check .").allowed
-    assert policy.validate("mypy src").allowed
-    assert policy.validate("git diff").allowed
-    assert policy.validate("git status").allowed
-    assert policy.validate("git apply --check patch.diff").allowed
-    assert policy.validate("codegraph files --json").allowed
+    assert policy.validate(["ruff", "check", "."]).allowed
+    assert policy.validate(["mypy", "src"]).allowed
+    assert policy.validate(["git", "diff"]).allowed
+    assert policy.validate(["git", "status"]).allowed
+    assert policy.validate(["git", "apply", "--check", "patch.diff"]).allowed
+    assert policy.validate(["codegraph", "files", "--json"]).allowed
 
 
 def test_command_policy_rejects_unsafe_or_arbitrary_commands():
@@ -36,12 +36,21 @@ def test_command_policy_rejects_unsafe_or_arbitrary_commands():
         "git push",
         "git reset --hard HEAD",
         "python -c 'print(1)'",
-        "pytest -q && rm -rf .",
+        ["pytest", "-q", "&&", "rm", "-rf", "."],
     ]:
         result = policy.validate(command)
         assert not result.allowed, command
         with pytest.raises(CommandRejected):
             policy.enforce(command)
+
+
+def test_command_policy_rejects_shell_strings():
+    policy = CommandPolicy()
+
+    result = policy.validate("pytest tests/test_parser.py -q")
+
+    assert not result.allowed
+    assert result.reason == "command must be an argv sequence"
 
 
 def test_filesystem_tool_reads_only_inside_repo(tmp_path):

@@ -6,8 +6,11 @@ import subprocess
 import time
 from typing import Sequence
 
-from codeops.core.models import TestResult
+from codeops.core.models import CheckCommand, TestCommand, TestResult
 from codeops.safety.command_policy import CommandPolicy
+
+
+RunnableCommand = TestCommand | CheckCommand | Sequence[str]
 
 
 class TestRunner:
@@ -23,20 +26,22 @@ class TestRunner:
         self.policy = policy or CommandPolicy()
         self.timeout_seconds = timeout_seconds
 
-    def run(self, command: str | Sequence[str]) -> TestResult:
-        argv = self.policy.enforce(command)
+    def run(self, command: RunnableCommand) -> TestResult:
+        argv, cwd, timeout_seconds, env = self._prepare(command)
+        argv = self.policy.enforce(argv)
         display_command = " ".join(argv)
         argv = _resolve_executable(argv)
         started = time.monotonic()
         try:
             result = subprocess.run(
                 argv,
-                cwd=self.repo_path,
+                cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout_seconds,
+                timeout=timeout_seconds,
                 check=False,
                 shell=False,
+                env=env or None,
             )
             duration = time.monotonic() - started
             return TestResult(
@@ -68,8 +73,23 @@ class TestRunner:
                 duration_seconds=duration,
             )
 
-    def run_many(self, commands: Sequence[str | Sequence[str]]) -> list[TestResult]:
+    def run_many(self, commands: Sequence[RunnableCommand]) -> list[TestResult]:
         return [self.run(command) for command in commands]
+
+    def _prepare(
+        self, command: RunnableCommand
+    ) -> tuple[list[str], Path, float, dict[str, str]]:
+        if isinstance(command, TestCommand | CheckCommand):
+            cwd = command.cwd.resolve()
+            if not _is_relative_to(cwd, self.repo_path):
+                cwd = self.repo_path
+            return (
+                list(command.command),
+                cwd,
+                float(command.timeout_seconds),
+                command.env,
+            )
+        return list(command), self.repo_path, self.timeout_seconds, {}
 
 
 def _resolve_executable(argv: list[str]) -> list[str]:
@@ -77,3 +97,11 @@ def _resolve_executable(argv: list[str]) -> list[str]:
     if found is None:
         return argv
     return [str(Path(found).resolve()), *argv[1:]]
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True

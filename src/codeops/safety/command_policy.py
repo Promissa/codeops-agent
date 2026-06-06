@@ -1,6 +1,5 @@
 """Allowlist policy for agent-generated commands."""
 
-import shlex
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -31,7 +30,13 @@ class CommandPolicyResult:
 class CommandPolicy:
     """Validate deterministic commands before execution."""
 
-    def validate(self, command: str | Sequence[str]) -> CommandPolicyResult:
+    def validate(self, command: Sequence[str]) -> CommandPolicyResult:
+        if isinstance(command, str):
+            return CommandPolicyResult(
+                False,
+                [],
+                "command must be an argv sequence",
+            )
         argv = _normalize_command(command)
         if not argv:
             return CommandPolicyResult(False, [], "empty command")
@@ -61,16 +66,14 @@ class CommandPolicy:
 
         return CommandPolicyResult(False, argv, f"{program!r} is not allowlisted")
 
-    def enforce(self, command: str | Sequence[str]) -> list[str]:
+    def enforce(self, command: Sequence[str]) -> list[str]:
         result = self.validate(command)
         if not result.allowed:
             raise CommandRejected(result.reason)
         return result.argv
 
 
-def _normalize_command(command: str | Sequence[str]) -> list[str]:
-    if isinstance(command, str):
-        return shlex.split(command)
+def _normalize_command(command: Sequence[str]) -> list[str]:
     return [str(part) for part in command]
 
 

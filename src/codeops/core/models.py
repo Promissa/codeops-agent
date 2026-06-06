@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -151,12 +151,49 @@ class PatchPlan(BaseModel):
     risk_notes: list[str] = Field(default_factory=list)
 
 
+CommandScope = Literal["acceptance", "affected", "module", "full"]
+ParseFormat = Literal[
+    "pytest",
+    "junit_xml",
+    "go_json",
+    "cargo",
+    "npm",
+    "dotnet",
+    "raw",
+]
+
+
+class TestCommand(BaseModel):
+    __test__: ClassVar[bool] = False
+
+    id: str
+    command: list[str]
+    cwd: Path
+    scope: CommandScope
+    language: str
+    timeout_seconds: int = 120
+    parse_format: ParseFormat = "raw"
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class CheckCommand(BaseModel):
+    __test__: ClassVar[bool] = False
+
+    id: str
+    command: list[str]
+    cwd: Path
+    language: str
+    timeout_seconds: int = 120
+    parse_format: ParseFormat = "raw"
+    env: dict[str, str] = Field(default_factory=dict)
+
+
 class VerificationPlan(BaseModel):
-    acceptance_tests: list[str] = Field(default_factory=list)
-    affected_tests: list[str] = Field(default_factory=list)
-    module_tests: list[str] = Field(default_factory=list)
-    full_tests: list[str] = Field(default_factory=list)
-    static_checks: list[str] = Field(default_factory=list)
+    acceptance_tests: list[TestCommand] = Field(default_factory=list)
+    affected_tests: list[TestCommand] = Field(default_factory=list)
+    module_tests: list[TestCommand] = Field(default_factory=list)
+    full_tests: list[TestCommand] = Field(default_factory=list)
+    static_checks: list[CheckCommand] = Field(default_factory=list)
     behavior_diff_required: bool
     coverage_required: bool
 

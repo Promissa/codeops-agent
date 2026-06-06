@@ -135,7 +135,11 @@ class WorkflowOrchestrator:
         writer.write_yaml("impact_envelope", impact_envelope)
 
         verification_builder = VerificationPlanBuilder()
-        verification_plan = verification_builder.build(impact_envelope)
+        verification_plan = verification_builder.build(
+            impact_envelope,
+            repo_path=request.repo_path,
+            language=project_profile.primary_language,
+        )
         writer.write_yaml("verification_plan", verification_plan)
 
         patch_plan = None

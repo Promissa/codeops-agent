@@ -5,7 +5,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from codeops.cli import app
-from codeops.core.models import ImpactEnvelope
+from codeops.core.models import ImpactEnvelope, TestCommand
 from codeops.workflow.nodes import VerificationPlanBuilder
 
 
@@ -21,10 +21,19 @@ def test_verification_plan_builder_selects_focused_pytest_command():
     )
 
     builder = VerificationPlanBuilder()
-    plan = builder.build(envelope)
+    plan = builder.build(envelope, repo_path=Path("examples/fixtures/mini_data_pipeline"))
 
-    assert plan.acceptance_tests == ["tests/test_parser.py"]
-    assert builder.commands(plan) == ["pytest tests/test_parser.py -q"]
+    assert plan.acceptance_tests == [
+        TestCommand(
+            id="pytest_acceptance_tests_test_parser.py",
+            command=["pytest", "tests/test_parser.py", "-q"],
+            cwd=Path("examples/fixtures/mini_data_pipeline").resolve(),
+            scope="acceptance",
+            language="Python",
+            parse_format="pytest",
+        )
+    ]
+    assert builder.commands(plan) == plan.acceptance_tests
 
 
 def test_cli_runs_fixture_parser_tests_and_saves_results(tmp_path):
@@ -51,3 +60,6 @@ def test_cli_runs_fixture_parser_tests_and_saves_results(tmp_path):
     assert results[0]["command"] == "pytest tests/test_parser.py -q"
     assert results[0]["passed"] is True
     assert (out / "verification_plan.yaml").exists()
+    verification_plan = (out / "verification_plan.yaml").read_text()
+    assert "command:" in verification_plan
+    assert "- \"pytest\"" in verification_plan
