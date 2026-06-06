@@ -66,6 +66,41 @@ def run(
             help="Record that the run should avoid network-backed operations.",
         ),
     ] = False,
+    llm_provider: Annotated[
+        str,
+        typer.Option(
+            "--llm-provider",
+            help="LLM provider for fallback patch generation: none, kimi, kimi-code, or openai-compatible.",
+        ),
+    ] = "none",
+    llm_model: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-model",
+            help="LLM model id. Defaults to kimi-k2.6 for Kimi providers.",
+        ),
+    ] = None,
+    llm_base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-base-url",
+            help="OpenAI-compatible base URL override.",
+        ),
+    ] = None,
+    llm_api_key_env: Annotated[
+        str | None,
+        typer.Option(
+            "--llm-api-key-env",
+            help="Environment variable containing the LLM API key.",
+        ),
+    ] = None,
+    llm_max_completion_tokens: Annotated[
+        int,
+        typer.Option(
+            "--llm-max-completion-tokens",
+            help="Maximum completion tokens for LLM fallback patch generation.",
+        ),
+    ] = 4096,
 ) -> None:
     """Create initial run artifacts for a task."""
     request = TaskRequest(
@@ -74,6 +109,11 @@ def run(
         out_path=out,
         retrieval_mode=retrieval,
         no_network=no_network,
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        llm_base_url=llm_base_url,
+        llm_api_key_env=llm_api_key_env,
+        llm_max_completion_tokens=llm_max_completion_tokens,
     )
     state = WorkflowOrchestrator().run(request)
     typer.echo(f"completed {state.task_id} with status {state.status}")

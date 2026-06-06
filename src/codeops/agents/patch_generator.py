@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Protocol
 
 from codeops.core.errors import ToolError
-from codeops.core.models import AcceptanceContract, PatchPlan
+from codeops.core.models import AcceptanceContract, ImpactEnvelope, PatchPlan
+from codeops.agents.llm_provider import LLMPatchResult
 
 
 class PatchProvider(Protocol):
@@ -17,21 +18,37 @@ class PatchProvider(Protocol):
         repo_path: Path,
         patch_plan: PatchPlan,
         acceptance_contract: AcceptanceContract,
-    ) -> str:
+        impact_envelope: ImpactEnvelope,
+    ) -> LLMPatchResult:
         """Return a unified diff."""
 
 
 class PatchGenerator:
     """Generate unified diffs without mutating the repository."""
 
+    def __init__(self, provider: PatchProvider | None = None) -> None:
+        self.provider = provider
+        self.last_llm_result: LLMPatchResult | None = None
+
     def generate(
         self,
         repo_path: Path,
         patch_plan: PatchPlan,
         acceptance_contract: AcceptanceContract,
+        impact_envelope: ImpactEnvelope | None = None,
     ) -> str:
+        self.last_llm_result = None
         if _is_csv_trailing_empty_contract(acceptance_contract):
             return self._fixture_csv_patch(repo_path, patch_plan)
+        if self.provider is not None and impact_envelope is not None:
+            result = self.provider.generate_patch(
+                repo_path,
+                patch_plan,
+                acceptance_contract,
+                impact_envelope,
+            )
+            self.last_llm_result = result
+            return result.patch_diff
         raise ToolError("no Phase 7 rule-based patch is available for this task")
 
     def _fixture_csv_patch(self, repo_path: Path, patch_plan: PatchPlan) -> str:

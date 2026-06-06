@@ -33,6 +33,11 @@ class TaskRequest(BaseModel):
     out_path: Path
     retrieval_mode: str = "codegraph"
     no_network: bool = False
+    llm_provider: str = "none"
+    llm_model: str | None = None
+    llm_base_url: str | None = None
+    llm_api_key_env: str | None = None
+    llm_max_completion_tokens: int = 4096
 
 
 class AcceptanceExample(BaseModel):

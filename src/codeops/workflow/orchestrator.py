@@ -4,6 +4,10 @@ from pathlib import Path
 import time
 
 from codeops.agents.manifest_writer import ManifestWriter
+from codeops.agents.llm_provider import (
+    OpenAICompatiblePatchProvider,
+    llm_config_from_request,
+)
 from codeops.agents.patch_generator import PatchGenerator
 from codeops.agents.patch_planner import PatchPlanner
 from codeops.agents.requirement_parser import RequirementParser
@@ -125,6 +129,11 @@ class WorkflowOrchestrator:
                     ]
                 }
             )
+        llm_warning = _llm_warning(request)
+        if llm_warning:
+            evidence = evidence.model_copy(
+                update={"warnings": [*evidence.warnings, llm_warning]}
+            )
         writer.write_json("graph_evidence", evidence)
 
         impact_envelope = ImpactEnvelopeBuilder().build(
@@ -147,12 +156,22 @@ class WorkflowOrchestrator:
         if acceptance_contract.status == "ready":
             patch_plan = PatchPlanner().plan(acceptance_contract, impact_envelope)
             writer.write_yaml("patch_plan", patch_plan)
+            patch_generator = PatchGenerator(provider=_llm_patch_provider(request))
             try:
-                patch_diff = PatchGenerator().generate(
+                patch_diff = patch_generator.generate(
                     request.repo_path,
                     patch_plan,
                     acceptance_contract,
+                    impact_envelope,
                 )
+                if patch_generator.last_llm_result is not None:
+                    cost_trace.llm_calls += 1
+                    cost_trace.llm_input_tokens += (
+                        patch_generator.last_llm_result.input_tokens
+                    )
+                    cost_trace.llm_output_tokens += (
+                        patch_generator.last_llm_result.output_tokens
+                    )
             except ToolError:
                 patch_diff = None
 
@@ -293,3 +312,32 @@ def _fallback_cross_checks(
             detail="No deterministic module match found.",
         )
     ]
+
+
+def _llm_patch_provider(request: TaskRequest) -> OpenAICompatiblePatchProvider | None:
+    if request.no_network:
+        return None
+    try:
+        config = llm_config_from_request(request)
+    except ToolError:
+        return None
+    if config is None or config.api_key is None:
+        return None
+    return OpenAICompatiblePatchProvider(config)
+
+
+def _llm_warning(request: TaskRequest) -> str | None:
+    try:
+        config = llm_config_from_request(request)
+    except ToolError as exc:
+        return f"LLM provider configuration invalid: {exc}"
+    if config is None:
+        return None
+    if request.no_network:
+        return "LLM provider requested but disabled by no-network mode."
+    if config.api_key is None:
+        return (
+            "LLM provider requested but API key env var is not set: "
+            f"{config.api_key_env}; LLM fallback disabled."
+        )
+    return f"LLM fallback enabled for provider {config.provider}."

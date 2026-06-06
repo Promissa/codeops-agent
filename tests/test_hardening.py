@@ -40,6 +40,8 @@ def test_cli_redacts_issue_text_and_records_no_network_warning(tmp_path):
             "--out",
             str(out),
             "--no-network",
+            "--llm-provider",
+            "kimi-code",
         ],
     )
 
@@ -51,6 +53,7 @@ def test_cli_redacts_issue_text_and_records_no_network_warning(tmp_path):
     assert "sk-abcdefghijklmnopqrstuvwxyz" not in task["issue_text"]
     assert "[REDACTED" in task["issue_text"]
     assert any("no-network mode requested" in warning for warning in evidence["warnings"])
+    assert any("LLM provider requested but disabled" in warning for warning in evidence["warnings"])
     assert "- Secret filter: redacted" in final_report
     assert "## Safety Checks" in final_report
 

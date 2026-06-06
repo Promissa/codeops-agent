@@ -40,6 +40,11 @@ def test_task_request_serializes_paths():
         "out_path": ".runs/demo_csv_bug",
         "retrieval_mode": "codegraph",
         "no_network": False,
+        "llm_provider": "none",
+        "llm_model": None,
+        "llm_base_url": None,
+        "llm_api_key_env": None,
+        "llm_max_completion_tokens": 4096,
     }
     assert TaskRequest.model_validate(payload) == request
 
