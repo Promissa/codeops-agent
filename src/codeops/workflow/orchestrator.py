@@ -415,6 +415,6 @@ def _llm_warning(request: TaskRequest) -> str | None:
     if config.api_key is None:
         return (
             "LLM provider requested but API key env var is not set: "
-            f"{config.api_key_env}; LLM fallback disabled."
+            f"{config.api_key_envs_display}; LLM fallback disabled."
         )
     return f"LLM fallback enabled for provider {config.provider}."

@@ -1,4 +1,6 @@
 from pathlib import Path
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -9,6 +11,7 @@ from codeops.agents.llm_provider import (
     LLMProviderConfig,
     OpenAICompatibleRoutingProvider,
     OpenAICompatiblePatchProvider,
+    _post_json,
     extract_unified_diff,
     llm_config_from_request,
 )
@@ -37,9 +40,10 @@ def test_kimi_config_defaults_to_moonshot_endpoint(monkeypatch):
     assert config.model == DEFAULT_KIMI_MODEL
     assert config.base_url == KIMI_BASE_URL
     assert config.api_key_env == "MOONSHOT_API_KEY"
+    assert config.api_key_env_aliases == ["KIMI_API_KEY"]
 
 
-def test_kimi_code_config_defaults_to_coding_endpoint():
+def test_kimi_code_config_defaults_to_official_chat_endpoint():
     request = _request(llm_provider="kimi-code")
 
     config = llm_config_from_request(request)
@@ -47,7 +51,18 @@ def test_kimi_code_config_defaults_to_coding_endpoint():
     assert config is not None
     assert config.provider == "kimi-code"
     assert config.base_url == KIMI_CODE_BASE_URL
-    assert config.api_key_env == "KIMI_API_KEY"
+    assert config.api_key_env == "MOONSHOT_API_KEY"
+    assert config.api_key_env_aliases == ["KIMI_API_KEY"]
+
+
+def test_kimi_config_accepts_kimi_api_key_alias(monkeypatch):
+    monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-key-for-kimi")
+
+    config = llm_config_from_request(_request(llm_provider="kimi-code"))
+
+    assert config is not None
+    assert config.api_key == "sk-test-key-for-kimi"
 
 
 def test_openai_compatible_requires_explicit_base_url_and_model():
@@ -101,6 +116,9 @@ def test_openai_compatible_patch_provider_posts_chat_completion(tmp_path, monkey
     assert calls[0][0] == f"{KIMI_BASE_URL}/chat/completions"
     assert calls[0][1]["Authorization"] == "Bearer sk-test-key-for-kimi"
     assert calls[0][2]["model"] == "kimi-k2.6"
+    assert calls[0][2]["max_tokens"] == 4096
+    assert "max_completion_tokens" not in calls[0][2]
+    assert "prompt_cache_key" not in calls[0][2]
     assert "ImpactEnvelope JSON" in calls[0][2]["messages"][1]["content"]
 
 
@@ -189,7 +207,39 @@ def test_openai_compatible_routing_provider_parses_component_json(tmp_path, monk
     assert result.components == ["src/plugins/intel_gpu"]
     assert result.llm_input_tokens == 50
     assert calls[0][0] == f"{KIMI_CODE_BASE_URL}/chat/completions"
+    assert calls[0][2]["max_tokens"] == 2048
+    assert "max_completion_tokens" not in calls[0][2]
+    assert calls[0][2]["response_format"] == {"type": "json_object"}
+    assert calls[0][2]["prompt_cache_key"].startswith("codeops-")
     assert "Deterministic candidates JSON" in calls[0][2]["messages"][1]["content"]
+
+
+def test_post_json_reports_kimi_http_error_body(monkeypatch):
+    class ErrorBody:
+        def read(self):
+            return b'{"error":{"message":"invalid api key"}}'
+
+        def close(self):
+            return None
+
+    def fail(*args, **kwargs):
+        raise urllib.error.HTTPError(
+            url="https://api.moonshot.cn/v1/chat/completions",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=ErrorBody(),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+    with pytest.raises(ToolError, match="invalid api key"):
+        _post_json(
+            "https://api.moonshot.cn/v1/chat/completions",
+            {"Authorization": "Bearer sk-bad"},
+            {"model": "kimi-k2.6", "messages": []},
+            1,
+        )
 
 
 def test_extract_unified_diff_handles_plain_and_fenced_output():

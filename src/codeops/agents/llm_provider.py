@@ -1,6 +1,7 @@
 """LLM provider support for bounded patch generation."""
 
 from collections.abc import Callable
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from codeops.core.errors import ToolError
 from codeops.core.models import (
@@ -23,8 +24,8 @@ from codeops.agents.issue_router import IssueRoutingResult
 from codeops.safety.secret_filter import SecretFilter
 
 
-KIMI_BASE_URL = "https://api.moonshot.ai/v1"
-KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
+KIMI_BASE_URL = "https://api.moonshot.cn/v1"
+KIMI_CODE_BASE_URL = KIMI_BASE_URL
 DEFAULT_KIMI_MODEL = "kimi-k2.6"
 
 
@@ -33,12 +34,22 @@ class LLMProviderConfig(BaseModel):
     model: str
     base_url: str
     api_key_env: str
+    api_key_env_aliases: list[str] = Field(default_factory=list)
     max_completion_tokens: int = 4096
     timeout_seconds: float = 60.0
 
     @property
     def api_key(self) -> str | None:
-        return os.environ.get(self.api_key_env)
+        for env_name in [self.api_key_env, *self.api_key_env_aliases]:
+            value = os.environ.get(env_name)
+            if value:
+                return value
+        return None
+
+    @property
+    def api_key_envs_display(self) -> str:
+        names = [self.api_key_env, *self.api_key_env_aliases]
+        return " or ".join(dict.fromkeys(names))
 
 
 class LLMPatchResult(BaseModel):
@@ -68,7 +79,8 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
                 "KIMI_BASE_URL",
             )
             or KIMI_BASE_URL,
-            api_key_env=request.llm_api_key_env or "MOONSHOT_API_KEY",
+            api_key_env=_api_key_env(request.llm_api_key_env),
+            api_key_env_aliases=_api_key_env_aliases(request.llm_api_key_env),
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
@@ -83,7 +95,8 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
                 "KIMI_CODE_BASE_URL",
             )
             or KIMI_CODE_BASE_URL,
-            api_key_env=request.llm_api_key_env or "KIMI_API_KEY",
+            api_key_env=_api_key_env(request.llm_api_key_env),
+            api_key_env_aliases=_api_key_env_aliases(request.llm_api_key_env),
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
@@ -127,7 +140,8 @@ class OpenAICompatiblePatchProvider:
         api_key = self.config.api_key
         if not api_key:
             raise ToolError(
-                f"LLM API key env var is not set: {self.config.api_key_env}"
+                "LLM API key env var is not set: "
+                f"{self.config.api_key_envs_display}"
             )
 
         user_prompt = _prompt(
@@ -140,29 +154,27 @@ class OpenAICompatiblePatchProvider:
         if not scan.passed:
             raise ToolError("secret detected in LLM prompt context")
 
+        payload = _chat_payload(
+            config=self.config,
+            repo_path=repo_path,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You generate minimal unified diffs for a code "
+                        "maintenance agent. Return only a unified diff. "
+                        "Do not explain. Do not edit files outside the "
+                        "impact envelope."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            max_completion_tokens=self.config.max_completion_tokens,
+        )
         response = self._transport(
             _chat_completions_url(self.config.base_url),
-            {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            {
-                "model": self.config.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You generate minimal unified diffs for a code "
-                            "maintenance agent. Return only a unified diff. "
-                            "Do not explain. Do not edit files outside the "
-                            "impact envelope."
-                        ),
-                    },
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0,
-                "max_completion_tokens": self.config.max_completion_tokens,
-            },
+            _headers(api_key),
+            payload,
             self.config.timeout_seconds,
         )
         content = _response_content(response)
@@ -202,7 +214,8 @@ class OpenAICompatibleRoutingProvider:
         api_key = self.config.api_key
         if not api_key:
             raise ToolError(
-                f"LLM API key env var is not set: {self.config.api_key_env}"
+                "LLM API key env var is not set: "
+                f"{self.config.api_key_envs_display}"
             )
         user_prompt = _routing_prompt(
             issue_text=issue_text,
@@ -214,31 +227,30 @@ class OpenAICompatibleRoutingProvider:
         if not scan.passed:
             raise ToolError("secret detected in LLM routing context")
 
+        payload = _chat_payload(
+            config=self.config,
+            repo_path=repo_path,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You route software issues to likely components. "
+                        "Return strict JSON only. Prefer files from the "
+                        "candidate list. Do not invent large refactors."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            max_completion_tokens=min(
+                self.config.max_completion_tokens,
+                2048,
+            ),
+            response_format={"type": "json_object"},
+        )
         response = self._transport(
             _chat_completions_url(self.config.base_url),
-            {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            {
-                "model": self.config.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You route software issues to likely components. "
-                            "Return strict JSON only. Prefer files from the "
-                            "candidate list. Do not invent large refactors."
-                        ),
-                    },
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0,
-                "max_completion_tokens": min(
-                    self.config.max_completion_tokens,
-                    2048,
-                ),
-            },
+            _headers(api_key),
+            payload,
             self.config.timeout_seconds,
         )
         parsed = _json_from_content(_response_content(response))
@@ -361,6 +373,42 @@ def _routing_prompt(
     )
 
 
+def _headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+
+def _chat_payload(
+    *,
+    config: LLMProviderConfig,
+    repo_path: Path,
+    messages: list[dict[str, str]],
+    max_completion_tokens: int,
+    response_format: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": config.model,
+        "messages": messages,
+        "temperature": 0,
+    }
+    if config.provider in {"kimi", "kimi-code"}:
+        payload["max_tokens"] = max_completion_tokens
+    else:
+        payload["max_completion_tokens"] = max_completion_tokens
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if config.provider == "kimi-code":
+        payload["prompt_cache_key"] = _prompt_cache_key(repo_path)
+    return payload
+
+
+def _prompt_cache_key(repo_path: Path) -> str:
+    digest = hashlib.sha256(str(repo_path.resolve()).encode("utf-8")).hexdigest()
+    return f"codeops-{digest[:32]}"
+
+
 def _post_json(
     url: str,
     headers: dict[str, str],
@@ -376,6 +424,9 @@ def _post_json(
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = _http_error_detail(exc)
+        raise ToolError(f"LLM API request failed: {detail}") from exc
     except urllib.error.URLError as exc:
         raise ToolError(f"LLM API request failed: {exc}") from exc
 
@@ -390,6 +441,20 @@ def _post_json(
 
 def _chat_completions_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/chat/completions"
+
+
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 - best effort diagnostics.
+        body = ""
+    if not body:
+        return f"HTTP {exc.code} {exc.reason}"
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return f"HTTP {exc.code} {exc.reason}: {body[:500]}"
+    return f"HTTP {exc.code} {exc.reason}: {json.dumps(parsed, ensure_ascii=False)}"
 
 
 def _response_content(response: dict[str, Any]) -> str:
@@ -442,6 +507,14 @@ def _float(value: Any) -> float:
     if isinstance(value, int | float):
         return max(0.0, min(1.0, float(value)))
     return 0.0
+
+
+def _api_key_env(explicit: str | None) -> str:
+    return explicit or "MOONSHOT_API_KEY"
+
+
+def _api_key_env_aliases(explicit: str | None) -> list[str]:
+    return [] if explicit else ["KIMI_API_KEY"]
 
 
 def _first_value(explicit: str | None, *env_names: str) -> str | None:
