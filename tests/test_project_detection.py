@@ -18,7 +18,7 @@ def test_project_detector_detects_javascript_fixture():
     assert profile.primary_language == "JavaScript"
     assert profile.language_profiles == ["javascript"]
     assert "npm" in profile.package_managers
-    assert "vitest" in profile.test_frameworks
+    assert "node:test" in profile.test_frameworks
 
 
 def test_project_detector_detects_typescript_fixture():

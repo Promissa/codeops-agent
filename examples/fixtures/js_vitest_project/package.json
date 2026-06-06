@@ -3,9 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run"
-  },
-  "devDependencies": {
-    "vitest": "1.6.0"
+    "test": "node --test tests/normalize.test.js"
   }
 }

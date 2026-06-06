@@ -13,6 +13,9 @@ DEPENDENCY_PATTERNS = (
     "pyproject.toml",
     "package.json",
     "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lockb",
     "requirements*.txt",
 )
 HIGH_RISK_PATTERNS = (

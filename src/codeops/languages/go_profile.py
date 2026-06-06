@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from codeops.core.models import CheckCommand, TestCommand
 from codeops.languages.base import DetectionResult, iter_repo_files
 
 
@@ -34,6 +35,22 @@ class GoProfile:
             workspace_roots=[repo_path] if (repo_path / "go.work").exists() else [],
             detected_from=sorted(set(detected_from)),
         )
+
+    def discover_test_commands(self, repo_path: Path) -> list[TestCommand]:
+        return []
+
+    def select_tests(
+        self,
+        repo_path: Path,
+        changed_files: list[str],
+        graph_tests: list[str],
+    ) -> list[TestCommand]:
+        return []
+
+    def static_checks(
+        self, repo_path: Path, changed_files: list[str]
+    ) -> list[CheckCommand]:
+        return []
 
 
 def _existing(repo_path: Path, names: set[str]) -> list[str]:

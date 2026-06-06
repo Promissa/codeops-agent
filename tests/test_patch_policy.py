@@ -21,6 +21,11 @@ def test_command_policy_allows_mvp_commands():
     assert policy.validate(["git", "status"]).allowed
     assert policy.validate(["git", "apply", "--check", "patch.diff"]).allowed
     assert policy.validate(["codegraph", "files", "--json"]).allowed
+    assert policy.validate(["npm", "run", "test"]).allowed
+    assert policy.validate(["npm", "run", "typecheck"]).allowed
+    assert policy.validate(["pnpm", "run", "test"]).allowed
+    assert policy.validate(["yarn", "run", "test"]).allowed
+    assert policy.validate(["bun", "run", "test"]).allowed
 
 
 def test_command_policy_rejects_unsafe_or_arbitrary_commands():
@@ -170,6 +175,31 @@ def test_patch_policy_rejects_dependency_change_unless_allowed():
     assert not rejected.allowed
     assert rejected.violations == ["dependency change is not allowed: pyproject.toml"]
     assert allowed.allowed
+
+
+def test_patch_policy_rejects_javascript_package_files_by_default():
+    for path in [
+        "package.json",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lockb",
+    ]:
+        patch = f"""diff --git a/{path} b/{path}
+--- a/{path}
++++ b/{path}
+@@ -1 +1,2 @@
+ {{}}
++{{"changed": true}}
+"""
+
+        result = PatchPolicy().validate(
+            patch,
+            _envelope(allowed_files=[path]),
+        )
+
+        assert not result.allowed
+        assert f"dependency change is not allowed: {path}" in result.violations
 
 
 def test_patch_policy_rejects_public_api_signature_change():

@@ -5,6 +5,8 @@ from typing import Iterator, Protocol
 
 from pydantic import BaseModel, Field
 
+from codeops.core.models import CheckCommand, TestCommand
+
 
 IGNORED_DIRS = {
     ".codeops",
@@ -49,6 +51,22 @@ class LanguageProfile(Protocol):
 
     def detect(self, repo_path: Path) -> DetectionResult | None:
         """Return detection metadata when this profile matches the repository."""
+
+    def discover_test_commands(self, repo_path: Path) -> list[TestCommand]:
+        """Return safe test commands discovered from project metadata."""
+
+    def select_tests(
+        self,
+        repo_path: Path,
+        changed_files: list[str],
+        graph_tests: list[str],
+    ) -> list[TestCommand]:
+        """Return affected test commands for changed files."""
+
+    def static_checks(
+        self, repo_path: Path, changed_files: list[str]
+    ) -> list[CheckCommand]:
+        """Return safe static checks discovered from project metadata."""
 
 
 def iter_repo_files(repo_path: Path) -> Iterator[Path]:

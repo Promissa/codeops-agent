@@ -16,6 +16,8 @@ RunnableCommand = TestCommand | CheckCommand | Sequence[str]
 class TestRunner:
     """Run allowlisted commands without a shell."""
 
+    __test__ = False
+
     def __init__(
         self,
         repo_path: Path,

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from codeops.core.models import CheckCommand, TestCommand
 from codeops.languages.base import DetectionResult, iter_repo_files
 
 
@@ -64,6 +65,78 @@ class JavaScriptProfile:
             warnings=[package_warning] if package_warning else [],
         )
 
+    def discover_test_commands(self, repo_path: Path) -> list[TestCommand]:
+        package_json, package_warning = _read_package_json(repo_path / "package.json")
+        if package_warning or not package_json:
+            return []
+        scripts = _scripts(package_json)
+        if "test" not in scripts:
+            return []
+        manager = _preferred_package_manager(repo_path)
+        language = _detected_language(repo_path)
+        return [
+            TestCommand(
+                id=f"{manager}_test",
+                command=[manager, "run", "test"],
+                cwd=repo_path.resolve(),
+                scope="full",
+                language=language,
+                parse_format="npm",
+            )
+        ]
+
+    def select_tests(
+        self,
+        repo_path: Path,
+        changed_files: list[str],
+        graph_tests: list[str],
+    ) -> list[TestCommand]:
+        package_json, package_warning = _read_package_json(repo_path / "package.json")
+        if package_warning or not package_json:
+            return []
+        scripts = _scripts(package_json)
+        manager = _preferred_package_manager(repo_path)
+        language = _detected_language(repo_path)
+        tests = _affected_test_files(repo_path, changed_files, graph_tests)
+        if tests:
+            return [
+                TestCommand(
+                    id=f"{manager}_affected_tests",
+                    command=[manager, "run", "test"],
+                    cwd=repo_path.resolve(),
+                    scope="affected",
+                    language=language,
+                    parse_format="npm",
+                )
+            ]
+        if "test" in scripts:
+            return self.discover_test_commands(repo_path)
+        return []
+
+    def static_checks(
+        self, repo_path: Path, changed_files: list[str]
+    ) -> list[CheckCommand]:
+        package_json, package_warning = _read_package_json(repo_path / "package.json")
+        if package_warning or not package_json:
+            return []
+        scripts = _scripts(package_json)
+        manager = _preferred_package_manager(repo_path)
+        language = _detected_language(repo_path)
+        checks: list[CheckCommand] = []
+        for script_name in ["typecheck", "lint"]:
+            if script_name not in scripts:
+                continue
+            checks.append(
+                CheckCommand(
+                    id=f"{manager}_{script_name}",
+                    command=[manager, "run", script_name],
+                    cwd=repo_path.resolve(),
+                    language=language,
+                    parse_format="npm",
+                )
+            )
+        return checks
+
 
 def _existing(repo_path: Path, names: set[str]) -> list[str]:
     return sorted(name for name in names if (repo_path / name).exists())
@@ -85,6 +158,17 @@ def _package_names(package_json: dict[str, Any]) -> set[str]:
         if isinstance(value, dict):
             names.update(str(name) for name in value)
     return names
+
+
+def _scripts(package_json: dict[str, Any]) -> dict[str, str]:
+    scripts = package_json.get("scripts", {})
+    if not isinstance(scripts, dict):
+        return {}
+    return {
+        str(name): str(command)
+        for name, command in scripts.items()
+        if isinstance(command, str)
+    }
 
 
 def _confidence(repo_path: Path, source_files: list[Path]) -> float:
@@ -127,6 +211,42 @@ def _package_managers(repo_path: Path) -> list[str]:
     if not managers and (repo_path / "package.json").exists():
         managers.append("npm")
     return managers
+
+
+def _preferred_package_manager(repo_path: Path) -> str:
+    managers = _package_managers(repo_path)
+    return managers[0] if managers else "npm"
+
+
+def _detected_language(repo_path: Path) -> str:
+    source_files = [
+        path
+        for path in iter_repo_files(repo_path)
+        if path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+    ]
+    if (repo_path / "tsconfig.json").exists() or any(
+        path.suffix in {".ts", ".tsx"} for path in source_files
+    ):
+        return "TypeScript"
+    return "JavaScript"
+
+
+def _affected_test_files(
+    repo_path: Path,
+    changed_files: list[str],
+    graph_tests: list[str],
+) -> list[str]:
+    selected = list(graph_tests)
+    changed_stems = {Path(path).stem for path in changed_files}
+    for path in iter_repo_files(repo_path):
+        if path.suffix not in {".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"}:
+            continue
+        if ".test." not in path.name and ".spec." not in path.name:
+            continue
+        test_stem = path.name.split(".", maxsplit=1)[0]
+        if test_stem in changed_stems:
+            selected.append(path.relative_to(repo_path).as_posix())
+    return list(dict.fromkeys(selected))
 
 
 def _test_frameworks(scripts: dict[str, Any]) -> list[str]:

@@ -58,6 +58,9 @@ class CommandPolicy:
         if program == "mypy" and argv[1:] == ["src"]:
             return CommandPolicyResult(True, argv, "mypy src is allowed")
 
+        if program in {"npm", "pnpm", "yarn", "bun"}:
+            return _validate_package_script(argv)
+
         if program == "git":
             return _validate_git(argv)
 
@@ -94,3 +97,16 @@ def _validate_codegraph(argv: list[str]) -> CommandPolicyResult:
     if len(argv) >= 2 and argv[1] in _CODEGRAPH_SUBCOMMANDS:
         return CommandPolicyResult(True, argv, "codegraph subcommand is allowed")
     return CommandPolicyResult(False, argv, "codegraph command is not allowlisted")
+
+
+def _validate_package_script(argv: list[str]) -> CommandPolicyResult:
+    program = argv[0]
+    if len(argv) == 3 and argv[1] == "run" and argv[2] in {"test", "typecheck", "lint"}:
+        return CommandPolicyResult(
+            True,
+            argv,
+            f"{program} package script is allowed",
+        )
+    if len(argv) == 2 and argv[1] == "test":
+        return CommandPolicyResult(True, argv, f"{program} test script is allowed")
+    return CommandPolicyResult(False, argv, f"{program} command is not allowlisted")
