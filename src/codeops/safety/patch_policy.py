@@ -20,6 +20,9 @@ DEPENDENCY_PATTERNS = (
     "go.sum",
     "Cargo.toml",
     "Cargo.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
     "requirements*.txt",
 )
 HIGH_RISK_PATTERNS = (

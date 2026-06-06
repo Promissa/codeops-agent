@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from codeops.languages.base import LanguageProfile
 from codeops.languages.go_profile import GoProfile
 from codeops.languages.javascript_profile import JavaScriptProfile
+from codeops.languages.java_profile import JavaProfile
 from codeops.languages.python_profile import PythonProfile
 from codeops.languages.rust_profile import RustProfile
 
@@ -28,4 +29,5 @@ def default_language_profiles() -> list[LanguageProfile]:
         JavaScriptProfile(),
         GoProfile(),
         RustProfile(),
+        JavaProfile(),
     ]

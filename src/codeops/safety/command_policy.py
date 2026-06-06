@@ -1,6 +1,7 @@
 """Allowlist policy for agent-generated commands."""
 
 from dataclasses import dataclass
+import re
 from typing import Sequence
 
 from codeops.core.errors import CommandRejected
@@ -66,6 +67,12 @@ class CommandPolicy:
 
         if program == "cargo":
             return _validate_cargo(argv)
+
+        if program == "mvn":
+            return _validate_maven(argv)
+
+        if program == "./gradlew":
+            return _validate_gradle_wrapper(argv)
 
         if program == "git":
             return _validate_git(argv)
@@ -141,3 +148,28 @@ def _validate_cargo(argv: list[str]) -> CommandPolicyResult:
     if argv == ["cargo", "clippy", "--all-targets", "--all-features"]:
         return CommandPolicyResult(True, argv, "cargo clippy is allowed")
     return CommandPolicyResult(False, argv, "cargo command is not allowlisted")
+
+
+def _validate_maven(argv: list[str]) -> CommandPolicyResult:
+    if argv == ["mvn", "test"]:
+        return CommandPolicyResult(True, argv, "mvn test is allowed")
+    if (
+        len(argv) == 3
+        and argv[1].startswith("-Dtest=")
+        and _is_safe_test_selector(argv[1].removeprefix("-Dtest="))
+        and argv[2] == "test"
+    ):
+        return CommandPolicyResult(True, argv, "mvn focused test is allowed")
+    return CommandPolicyResult(False, argv, "mvn command is not allowlisted")
+
+
+def _validate_gradle_wrapper(argv: list[str]) -> CommandPolicyResult:
+    if argv == ["./gradlew", "test"]:
+        return CommandPolicyResult(True, argv, "gradle wrapper test is allowed")
+    if len(argv) == 2 and argv[1].startswith(":") and argv[1].endswith(":test"):
+        return CommandPolicyResult(True, argv, "gradle wrapper module test is allowed")
+    return CommandPolicyResult(False, argv, "gradle wrapper command is not allowlisted")
+
+
+def _is_safe_test_selector(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_,$.*]+", value))
