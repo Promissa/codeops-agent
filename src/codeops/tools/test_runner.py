@@ -8,6 +8,7 @@ from typing import Sequence
 
 from codeops.core.models import CheckCommand, TestCommand, TestResult
 from codeops.safety.command_policy import CommandPolicy
+from codeops.tools.test_output_parser import parse_go_test_json
 
 
 RunnableCommand = TestCommand | CheckCommand | Sequence[str]
@@ -46,9 +47,12 @@ class TestRunner:
                 env=env or None,
             )
             duration = time.monotonic() - started
+            passed = result.returncode == 0
+            if isinstance(command, TestCommand | CheckCommand) and command.parse_format == "go_json":
+                passed = passed and parse_go_test_json(result.stdout).passed
             return TestResult(
                 command=display_command,
-                passed=result.returncode == 0,
+                passed=passed,
                 exit_code=result.returncode,
                 stdout=result.stdout,
                 stderr=result.stderr,

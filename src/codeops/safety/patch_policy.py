@@ -16,6 +16,8 @@ DEPENDENCY_PATTERNS = (
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lockb",
+    "go.mod",
+    "go.sum",
     "requirements*.txt",
 )
 HIGH_RISK_PATTERNS = (

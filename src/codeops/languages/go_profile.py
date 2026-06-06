@@ -37,7 +37,18 @@ class GoProfile:
         )
 
     def discover_test_commands(self, repo_path: Path) -> list[TestCommand]:
-        return []
+        if not (repo_path / "go.mod").exists() and not _go_files(repo_path):
+            return []
+        return [
+            TestCommand(
+                id="go_test_all",
+                command=["go", "test", "-json", "./..."],
+                cwd=repo_path.resolve(),
+                scope="full",
+                language="Go",
+                parse_format="go_json",
+            )
+        ]
 
     def select_tests(
         self,
@@ -45,12 +56,35 @@ class GoProfile:
         changed_files: list[str],
         graph_tests: list[str],
     ) -> list[TestCommand]:
-        return []
+        packages = _affected_packages(repo_path, changed_files)
+        if not packages and graph_tests:
+            packages = ["./..."]
+        return [
+            TestCommand(
+                id=f"go_test_{package.replace('/', '_').replace('.', 'root')}",
+                command=["go", "test", "-json", package],
+                cwd=repo_path.resolve(),
+                scope="affected",
+                language="Go",
+                parse_format="go_json",
+            )
+            for package in packages
+        ]
 
     def static_checks(
         self, repo_path: Path, changed_files: list[str]
     ) -> list[CheckCommand]:
-        return []
+        if not (repo_path / "go.mod").exists() and not _go_files(repo_path):
+            return []
+        return [
+            CheckCommand(
+                id="go_vet_all",
+                command=["go", "vet", "./..."],
+                cwd=repo_path.resolve(),
+                language="Go",
+                parse_format="raw",
+            )
+        ]
 
 
 def _existing(repo_path: Path, names: set[str]) -> list[str]:
@@ -64,3 +98,18 @@ def _build_systems(repo_path: Path) -> list[str]:
     if (repo_path / "go.work").exists():
         systems.append("go workspace")
     return systems
+
+
+def _go_files(repo_path: Path) -> list[Path]:
+    return [path for path in iter_repo_files(repo_path) if path.suffix == ".go"]
+
+
+def _affected_packages(repo_path: Path, changed_files: list[str]) -> list[str]:
+    packages: list[str] = []
+    for changed_file in changed_files:
+        path = Path(changed_file)
+        if path.suffix != ".go":
+            continue
+        parent = path.parent.as_posix()
+        packages.append("." if parent == "." else f"./{parent}")
+    return list(dict.fromkeys(packages))

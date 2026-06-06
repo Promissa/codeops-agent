@@ -61,6 +61,9 @@ class CommandPolicy:
         if program in {"npm", "pnpm", "yarn", "bun"}:
             return _validate_package_script(argv)
 
+        if program == "go":
+            return _validate_go(argv)
+
         if program == "git":
             return _validate_git(argv)
 
@@ -110,3 +113,18 @@ def _validate_package_script(argv: list[str]) -> CommandPolicyResult:
     if len(argv) == 2 and argv[1] == "test":
         return CommandPolicyResult(True, argv, f"{program} test script is allowed")
     return CommandPolicyResult(False, argv, f"{program} command is not allowlisted")
+
+
+def _validate_go(argv: list[str]) -> CommandPolicyResult:
+    if len(argv) in {3, 4} and argv[1] == "test":
+        package = argv[-1]
+        flags = argv[2:-1]
+        if all(flag == "-json" for flag in flags) and _is_go_package_pattern(package):
+            return CommandPolicyResult(True, argv, "go test package command is allowed")
+    if argv == ["go", "vet", "./..."]:
+        return CommandPolicyResult(True, argv, "go vet ./... is allowed")
+    return CommandPolicyResult(False, argv, "go command is not allowlisted")
+
+
+def _is_go_package_pattern(value: str) -> bool:
+    return value == "." or value == "./..." or value.startswith("./")
