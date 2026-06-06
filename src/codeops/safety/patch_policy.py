@@ -18,6 +18,8 @@ DEPENDENCY_PATTERNS = (
     "bun.lockb",
     "go.mod",
     "go.sum",
+    "Cargo.toml",
+    "Cargo.lock",
     "requirements*.txt",
 )
 HIGH_RISK_PATTERNS = (

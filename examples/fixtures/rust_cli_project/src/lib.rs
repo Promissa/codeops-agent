@@ -5,3 +5,13 @@ pub fn parse_token(value: &str) -> Result<&str, &'static str> {
         Ok(value)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_token;
+
+    #[test]
+    fn rejects_invalid_token() {
+        assert_eq!(parse_token(""), Err("invalid token"));
+    }
+}

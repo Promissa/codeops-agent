@@ -64,6 +64,9 @@ class CommandPolicy:
         if program == "go":
             return _validate_go(argv)
 
+        if program == "cargo":
+            return _validate_cargo(argv)
+
         if program == "git":
             return _validate_git(argv)
 
@@ -128,3 +131,13 @@ def _validate_go(argv: list[str]) -> CommandPolicyResult:
 
 def _is_go_package_pattern(value: str) -> bool:
     return value == "." or value == "./..." or value.startswith("./")
+
+
+def _validate_cargo(argv: list[str]) -> CommandPolicyResult:
+    if argv == ["cargo", "test"]:
+        return CommandPolicyResult(True, argv, "cargo test is allowed")
+    if argv == ["cargo", "check"]:
+        return CommandPolicyResult(True, argv, "cargo check is allowed")
+    if argv == ["cargo", "clippy", "--all-targets", "--all-features"]:
+        return CommandPolicyResult(True, argv, "cargo clippy is allowed")
+    return CommandPolicyResult(False, argv, "cargo command is not allowlisted")

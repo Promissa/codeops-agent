@@ -37,7 +37,18 @@ class RustProfile:
         )
 
     def discover_test_commands(self, repo_path: Path) -> list[TestCommand]:
-        return []
+        if not (repo_path / "Cargo.toml").exists():
+            return []
+        return [
+            TestCommand(
+                id="cargo_test",
+                command=["cargo", "test"],
+                cwd=repo_path.resolve(),
+                scope="full",
+                language="Rust",
+                parse_format="cargo",
+            )
+        ]
 
     def select_tests(
         self,
@@ -45,12 +56,35 @@ class RustProfile:
         changed_files: list[str],
         graph_tests: list[str],
     ) -> list[TestCommand]:
-        return []
+        if not (repo_path / "Cargo.toml").exists():
+            return []
+        if not any(Path(path).suffix == ".rs" for path in changed_files) and not graph_tests:
+            return []
+        return [
+            TestCommand(
+                id="cargo_test_affected",
+                command=["cargo", "test"],
+                cwd=repo_path.resolve(),
+                scope="affected",
+                language="Rust",
+                parse_format="cargo",
+            )
+        ]
 
     def static_checks(
         self, repo_path: Path, changed_files: list[str]
     ) -> list[CheckCommand]:
-        return []
+        if not (repo_path / "Cargo.toml").exists():
+            return []
+        return [
+            CheckCommand(
+                id="cargo_check",
+                command=["cargo", "check"],
+                cwd=repo_path.resolve(),
+                language="Rust",
+                parse_format="cargo",
+            )
+        ]
 
 
 def _existing(repo_path: Path, names: set[str]) -> list[str]:
