@@ -20,6 +20,7 @@ from codeops.core.models import (
 )
 from codeops.core.paths import RunPaths
 from codeops.core.state import create_task_state
+from codeops.languages.detector import ProjectDetector
 from codeops.retrieval.graph_reliability import GraphReliabilityLayer
 from codeops.retrieval.impact_envelope import ImpactEnvelopeBuilder
 from codeops.retrieval.local_embeddings import LocalEmbeddingRetriever
@@ -43,6 +44,7 @@ class WorkflowOrchestrator:
         writer = ArtifactWriter(paths)
         issue_text = SecretFilter().scan(request.issue_path.read_text()).redacted_text
         cost_trace = CostTrace()
+        project_profile = ProjectDetector().detect(request.repo_path)
 
         acceptance_contract = RequirementParser().parse(issue_text)
         state = create_task_state(
@@ -53,6 +55,7 @@ class WorkflowOrchestrator:
             run_dir=paths.run_dir,
         ).model_copy(
             update={
+                "project_profile": project_profile,
                 "acceptance_contract": acceptance_contract,
                 "status": (
                     "contracted"

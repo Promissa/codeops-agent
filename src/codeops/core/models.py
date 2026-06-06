@@ -76,6 +76,21 @@ class RepoSketch(BaseModel):
     )
 
 
+class ProjectProfile(BaseModel):
+    repo_path: Path
+    primary_language: str
+    secondary_languages: list[str] = Field(default_factory=list)
+    frameworks: list[str] = Field(default_factory=list)
+    build_systems: list[str] = Field(default_factory=list)
+    package_managers: list[str] = Field(default_factory=list)
+    test_frameworks: list[str] = Field(default_factory=list)
+    language_profiles: list[str] = Field(default_factory=list)
+    monorepo: bool = False
+    workspace_roots: list[Path] = Field(default_factory=list)
+    detected_from: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SymbolRef(BaseModel):
     symbol: str
     path: str
@@ -173,6 +188,7 @@ class TaskState(BaseModel):
     issue_path: Path | None = None
     issue_text: str
     run_dir: Path
+    project_profile: ProjectProfile | None = None
     status: TaskStatus = "created"
     acceptance_contract: AcceptanceContract | None = None
     graph_evidence: GraphEvidence | None = None

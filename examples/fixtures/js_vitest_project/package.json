@@ -1,0 +1,11 @@
+{
+  "name": "js-vitest-project",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "1.6.0"
+  }
+}

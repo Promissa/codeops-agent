@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import shutil
 
@@ -67,4 +68,7 @@ def test_cli_completes_fixture_workflow_and_writes_expected_artifacts(tmp_path):
     assert "test_trailing_empty_column_returns_none" in (
         repo / "tests/test_parser.py"
     ).read_text()
+    task = json.loads((out / "task.json").read_text())
+    assert task["project_profile"]["primary_language"] == "Python"
+    assert task["project_profile"]["language_profiles"] == ["python"]
     assert "completed demo_csv_bug" in result.output
