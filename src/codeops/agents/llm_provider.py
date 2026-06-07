@@ -24,9 +24,10 @@ from codeops.safety.secret_filter import SecretFilter
 
 
 KIMI_BASE_URL = "https://api.moonshot.cn/v1"
-KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
+KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/"
 DEFAULT_KIMI_MODEL = "kimi-k2.6"
 DEFAULT_KIMI_CODE_MODEL = "kimi-for-coding"
+ANTHROPIC_VERSION = "2023-06-01"
 
 
 class LLMProviderConfig(BaseModel):
@@ -34,6 +35,7 @@ class LLMProviderConfig(BaseModel):
     model: str
     base_url: str
     api_key_env: str
+    api_protocol: str = "openai"
     api_key_env_aliases: list[str] = Field(default_factory=list)
     max_completion_tokens: int = 4096
     timeout_seconds: float = 60.0
@@ -100,6 +102,12 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
             )
             or KIMI_CODE_BASE_URL,
             api_key_env=request.llm_api_key_env or "KIMI_API_KEY",
+            api_protocol=_first_value(
+                None,
+                "CODEOPS_LLM_API_PROTOCOL",
+                "KIMI_CODE_API_PROTOCOL",
+            )
+            or "anthropic",
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
@@ -157,8 +165,9 @@ class OpenAICompatiblePatchProvider:
         if not scan.passed:
             raise ToolError("secret detected in LLM prompt context")
 
-        payload = _chat_payload(
+        url, headers, payload = _chat_request(
             config=self.config,
+            api_key=api_key,
             messages=[
                 {
                     "role": "system",
@@ -174,8 +183,8 @@ class OpenAICompatiblePatchProvider:
             max_completion_tokens=self.config.max_completion_tokens,
         )
         response = self._transport(
-            _chat_completions_url(self.config.base_url),
-            _headers(api_key),
+            url,
+            headers,
             payload,
             self.config.timeout_seconds,
         )
@@ -186,8 +195,8 @@ class OpenAICompatiblePatchProvider:
         usage = response.get("usage", {}) if isinstance(response, dict) else {}
         return LLMPatchResult(
             patch_diff=patch_diff,
-            input_tokens=_int(usage.get("prompt_tokens")),
-            output_tokens=_int(usage.get("completion_tokens")),
+            input_tokens=_input_tokens(usage),
+            output_tokens=_output_tokens(usage),
             model=str(response.get("model") or self.config.model),
             provider=self.config.provider,
         )
@@ -229,8 +238,9 @@ class OpenAICompatibleRoutingProvider:
         if not scan.passed:
             raise ToolError("secret detected in LLM routing context")
 
-        payload = _chat_payload(
+        url, headers, payload = _chat_request(
             config=self.config,
+            api_key=api_key,
             messages=[
                 {
                     "role": "system",
@@ -249,8 +259,8 @@ class OpenAICompatibleRoutingProvider:
             response_format={"type": "json_object"},
         )
         response = self._transport(
-            _chat_completions_url(self.config.base_url),
-            _headers(api_key),
+            url,
+            headers,
             payload,
             self.config.timeout_seconds,
         )
@@ -265,8 +275,8 @@ class OpenAICompatibleRoutingProvider:
             candidates=deterministic_result.candidates,
             confidence=_float(parsed.get("confidence")),
             rationale=str(parsed.get("rationale", "")),
-            llm_input_tokens=_int(usage.get("prompt_tokens")),
-            llm_output_tokens=_int(usage.get("completion_tokens")),
+            llm_input_tokens=_input_tokens(usage),
+            llm_output_tokens=_output_tokens(usage),
             llm_calls=1,
         )
 
@@ -381,6 +391,44 @@ def _headers(api_key: str) -> dict[str, str]:
     }
 
 
+def _anthropic_headers(api_key: str) -> dict[str, str]:
+    return {
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "Content-Type": "application/json",
+    }
+
+
+def _chat_request(
+    *,
+    config: LLMProviderConfig,
+    api_key: str,
+    messages: list[dict[str, str]],
+    max_completion_tokens: int,
+    response_format: dict[str, str] | None = None,
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    if config.api_protocol == "anthropic":
+        return (
+            _anthropic_messages_url(config.base_url),
+            _anthropic_headers(api_key),
+            _anthropic_payload(
+                config=config,
+                messages=messages,
+                max_completion_tokens=max_completion_tokens,
+            ),
+        )
+    return (
+        _chat_completions_url(config.base_url),
+        _headers(api_key),
+        _chat_payload(
+            config=config,
+            messages=messages,
+            max_completion_tokens=max_completion_tokens,
+            response_format=response_format,
+        ),
+    )
+
+
 def _chat_payload(
     *,
     config: LLMProviderConfig,
@@ -399,6 +447,34 @@ def _chat_payload(
         payload["max_completion_tokens"] = max_completion_tokens
     if response_format is not None:
         payload["response_format"] = response_format
+    return payload
+
+
+def _anthropic_payload(
+    *,
+    config: LLMProviderConfig,
+    messages: list[dict[str, str]],
+    max_completion_tokens: int,
+) -> dict[str, Any]:
+    system_parts = []
+    conversation = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role == "system":
+            system_parts.append(content)
+        elif role in {"user", "assistant"}:
+            conversation.append({"role": role, "content": content})
+    if not conversation:
+        conversation.append({"role": "user", "content": ""})
+    payload: dict[str, Any] = {
+        "model": config.model,
+        "messages": conversation,
+        "max_tokens": max_completion_tokens,
+        "temperature": 0,
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
     return payload
 
 
@@ -436,6 +512,15 @@ def _chat_completions_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/chat/completions"
 
 
+def _anthropic_messages_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/v1/messages"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return normalized + "/messages"
+    return normalized + "/v1/messages"
+
+
 def _http_error_detail(exc: urllib.error.HTTPError) -> str:
     try:
         body = exc.read().decode("utf-8", errors="replace")
@@ -451,6 +536,18 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str:
 
 
 def _response_content(response: dict[str, Any]) -> str:
+    content = response.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = [
+            str(item.get("text", ""))
+            for item in content
+            if isinstance(item, dict) and item.get("type", "text") == "text"
+        ]
+        if text_parts:
+            return "\n".join(text_parts)
+
     choices = response.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ToolError("LLM API response did not include choices")
@@ -500,6 +597,14 @@ def _float(value: Any) -> float:
     if isinstance(value, int | float):
         return max(0.0, min(1.0, float(value)))
     return 0.0
+
+
+def _input_tokens(usage: dict[str, Any]) -> int:
+    return _int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+
+
+def _output_tokens(usage: dict[str, Any]) -> int:
+    return _int(usage.get("completion_tokens") or usage.get("output_tokens"))
 
 
 def _first_value(explicit: str | None, *env_names: str) -> str | None:

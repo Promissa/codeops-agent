@@ -27,6 +27,8 @@ uv run codeops run \
 Kimi Platform and Kimi Code use separate keys and endpoints. `kimi` uses
 `MOONSHOT_API_KEY`, model `kimi-k2.6`, and `https://api.moonshot.cn/v1`.
 `kimi-code` uses `KIMI_API_KEY`, model `kimi-for-coding`, and
-`https://api.kimi.com/coding/v1`.
+the Anthropic-compatible endpoint `https://api.kimi.com/coding/`.
+Kimi Code's OpenAI-compatible endpoint requires an allowlisted coding-agent
+client, so CodeOps defaults to Anthropic Messages for `kimi-code`.
 
 The LLM receives only redacted context from the AcceptanceContract, PatchPlan, ImpactEnvelope, and allowed files. Generated diffs still pass through patch policy and tests before verification.
