@@ -1,7 +1,6 @@
 """LLM provider support for bounded patch generation."""
 
 from collections.abc import Callable
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,8 +24,9 @@ from codeops.safety.secret_filter import SecretFilter
 
 
 KIMI_BASE_URL = "https://api.moonshot.cn/v1"
-KIMI_CODE_BASE_URL = KIMI_BASE_URL
+KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
 DEFAULT_KIMI_MODEL = "kimi-k2.6"
+DEFAULT_KIMI_CODE_MODEL = "kimi-for-coding"
 
 
 class LLMProviderConfig(BaseModel):
@@ -79,24 +79,27 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
                 "KIMI_BASE_URL",
             )
             or KIMI_BASE_URL,
-            api_key_env=_api_key_env(request.llm_api_key_env),
-            api_key_env_aliases=_api_key_env_aliases(request.llm_api_key_env),
+            api_key_env=request.llm_api_key_env or "MOONSHOT_API_KEY",
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
     if provider in {"kimi-code", "kimi_code", "kimi-code-ai", "kimi_code_ai"}:
         return LLMProviderConfig(
             provider="kimi-code",
-            model=_first_value(request.llm_model, "CODEOPS_LLM_MODEL", "KIMI_MODEL")
-            or DEFAULT_KIMI_MODEL,
+            model=_first_value(
+                request.llm_model,
+                "CODEOPS_LLM_MODEL",
+                "KIMI_CODE_MODEL",
+                "KIMI_MODEL",
+            )
+            or DEFAULT_KIMI_CODE_MODEL,
             base_url=_first_value(
                 request.llm_base_url,
                 "CODEOPS_LLM_BASE_URL",
                 "KIMI_CODE_BASE_URL",
             )
             or KIMI_CODE_BASE_URL,
-            api_key_env=_api_key_env(request.llm_api_key_env),
-            api_key_env_aliases=_api_key_env_aliases(request.llm_api_key_env),
+            api_key_env=request.llm_api_key_env or "KIMI_API_KEY",
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
@@ -156,7 +159,6 @@ class OpenAICompatiblePatchProvider:
 
         payload = _chat_payload(
             config=self.config,
-            repo_path=repo_path,
             messages=[
                 {
                     "role": "system",
@@ -229,7 +231,6 @@ class OpenAICompatibleRoutingProvider:
 
         payload = _chat_payload(
             config=self.config,
-            repo_path=repo_path,
             messages=[
                 {
                     "role": "system",
@@ -383,7 +384,6 @@ def _headers(api_key: str) -> dict[str, str]:
 def _chat_payload(
     *,
     config: LLMProviderConfig,
-    repo_path: Path,
     messages: list[dict[str, str]],
     max_completion_tokens: int,
     response_format: dict[str, str] | None = None,
@@ -399,14 +399,7 @@ def _chat_payload(
         payload["max_completion_tokens"] = max_completion_tokens
     if response_format is not None:
         payload["response_format"] = response_format
-    if config.provider == "kimi-code":
-        payload["prompt_cache_key"] = _prompt_cache_key(repo_path)
     return payload
-
-
-def _prompt_cache_key(repo_path: Path) -> str:
-    digest = hashlib.sha256(str(repo_path.resolve()).encode("utf-8")).hexdigest()
-    return f"codeops-{digest[:32]}"
 
 
 def _post_json(
@@ -507,14 +500,6 @@ def _float(value: Any) -> float:
     if isinstance(value, int | float):
         return max(0.0, min(1.0, float(value)))
     return 0.0
-
-
-def _api_key_env(explicit: str | None) -> str:
-    return explicit or "MOONSHOT_API_KEY"
-
-
-def _api_key_env_aliases(explicit: str | None) -> list[str]:
-    return [] if explicit else ["KIMI_API_KEY"]
 
 
 def _first_value(explicit: str | None, *env_names: str) -> str | None:
