@@ -1,19 +1,31 @@
 """Manifest and evidence matrix rendering."""
 
+from collections.abc import Sequence
+
 from codeops.agents.reviewer import ReviewResult
 from codeops.core.models import TaskState
+from codeops.gate.evidence_gate import EvidenceGateResult
+from codeops.reporting.summary import determine_verdict, verification_outcome
+from codeops.reporting.trace_events import TraceEvent
 from codeops.safety.secret_filter import SecretFilter
 
 
 class ManifestWriter:
     """Render reviewer-facing markdown artifacts."""
 
-    def evidence_matrix(self, state: TaskState) -> str:
+    def evidence_matrix(self, state: TaskState, events: Sequence[TraceEvent] = ()) -> str:
         contract = state.acceptance_contract
         requirement = contract.requirement_id if contract else "unknown"
         changed = _changed_file_summary(state)
         verification = _tests_summary(state)
-        status = "Passed" if state.test_results and all(r.passed for r in state.test_results) else "Pending"
+        outcomes = {verification_outcome(result) for result in state.test_results}
+        status = "Failed" if "failed" in outcomes else "Passed" if outcomes == {"passed"} else "Pending"
+        gate = _gate_details(events)
+        if gate:
+            if gate.actual_diff_status != "unavailable":
+                changed = "[Actual workspace diff](workspace_diff.json)"
+            verification += " · [Differential results](differential_results.json) · " + _gate_transitions(gate)
+            status = gate.verdict
 
         return "\n".join(
             [
@@ -27,12 +39,18 @@ class ManifestWriter:
             ]
         )
 
-    def intent_manifest(self, state: TaskState, review: ReviewResult) -> str:
-        return "\n".join(
+    def intent_manifest(
+        self, state: TaskState, review: ReviewResult, events: Sequence[TraceEvent] = (),
+    ) -> str:
+        content = "\n".join(
             [
                 "# Intent",
                 "",
                 _requirement_summary(state),
+                "",
+                "# Trust Summary",
+                "",
+                *_trust_summary(state, review, events),
                 "",
                 "# Behavior Change",
                 "",
@@ -70,15 +88,19 @@ class ManifestWriter:
                 "",
             ]
         )
+        return SecretFilter().scan(content).redacted_text
 
-    def final_report(self, state: TaskState, review: ReviewResult) -> str:
-        return "\n".join(
+    def final_report(
+        self, state: TaskState, review: ReviewResult, events: Sequence[TraceEvent] = (),
+    ) -> str:
+        content = "\n".join(
             [
                 "# Final Report",
                 "",
                 f"- Task: `{state.task_id}`",
                 f"- Status: `{state.status}`",
-                f"- Reviewer verified: `{review.verified}`",
+                *_trust_summary(state, review, events),
+                f"- Reviewer verified: `{(state.verdict or determine_verdict(state, review, events)) == 'verified'}`",
                 f"- Violations: {', '.join(review.violations) or 'none'}",
                 f"- Warnings: {', '.join(review.warnings) or 'none'}",
                 "",
@@ -88,10 +110,48 @@ class ManifestWriter:
                 "",
                 "## Safety Checks",
                 "",
-                _safety_checks(state),
+                _safety_checks(state, events),
                 "",
             ]
         )
+        return SecretFilter().scan(content).redacted_text
+
+
+def _trust_summary(state: TaskState, review: ReviewResult, events: Sequence[TraceEvent]) -> list[str]:
+    reason = next(
+        (event.details.get("reason") or event.details.get("message") or event.summary
+         for event in reversed(events)
+         if event.kind == "error" or (event.kind == "policy_check" and event.stage == "run")),
+        None,
+    )
+    lines = [
+        f"- Trust verdict: `{state.verdict or determine_verdict(state, review, events)}`",
+        f"- Lifecycle: `{state.lifecycle_state or 'unrecorded'}`",
+        f"- Termination: `{state.termination_reason or 'unrecorded'}`",
+        "- Trace: [Visual report](trace_report.html) · [Event stream](trace_events.jsonl)",
+    ]
+    if reason:
+        lines.append(f"- Termination detail: {reason}")
+    gate = _gate_details(events)
+    if gate:
+        lines.extend([
+            f"- Actual net diff policy: `{gate.actual_diff_status}`",
+            f"- Differential transitions: {_gate_transitions(gate)}",
+            "- Gate evidence: [Verdict](evidence_gate.json) · [Effect map](effect_map.json)",
+            *(f"- Next step: {step}" for step in gate.next_steps),
+        ])
+    return lines
+
+
+def _gate_details(events: Sequence[TraceEvent]) -> EvidenceGateResult | None:
+    for event in reversed(events):
+        if event.kind == "evidence_gate" and "gate" in event.details:
+            return EvidenceGateResult.model_validate(event.details["gate"])
+    return None
+
+
+def _gate_transitions(gate: EvidenceGateResult) -> str:
+    return ", ".join(f"{count} {outcome}" for outcome, count in gate.transitions.items())
 
 
 def _requirement_summary(state: TaskState) -> str:
@@ -149,7 +209,7 @@ def _tests_markdown(state: TaskState) -> str:
     if not state.test_results:
         return "- none"
     return "\n".join(
-        f"- `{result.command}`: {'passed' if result.passed else 'failed'}"
+        f"- `{result.command}`: {verification_outcome(result)}"
         for result in state.test_results
     )
 
@@ -177,7 +237,7 @@ def _risks(review: ReviewResult) -> str:
     return "\n".join(lines) if lines else "No reviewer risks recorded."
 
 
-def _safety_checks(state: TaskState) -> str:
+def _safety_checks(state: TaskState, events: Sequence[TraceEvent]) -> str:
     secret_scan = SecretFilter().scan(state.issue_text)
     envelope = state.impact_envelope
     high_risk = (
@@ -190,7 +250,14 @@ def _safety_checks(state: TaskState) -> str:
         if state.graph_evidence is not None and state.graph_evidence.codegraph_version
         else "unavailable"
     )
-    patch_policy = "passed" if state.patch_diff else "not applicable"
+    patch_checks = [event for event in events if event.kind == "policy_check" and event.stage == "patch"]
+    patch_policy = "denied" if any(event.status == "denied" for event in patch_checks) else (
+        "passed" if patch_checks else "not recorded"
+    )
+    command_checks = [event for event in events if event.kind == "policy_check" and event.stage == "verification"]
+    command_policy = "denied" if any(event.status == "denied" for event in command_checks) else (
+        "passed" if any(event.status == "allowed" for event in command_checks) else "not recorded"
+    )
     secret_status = (
         "redacted"
         if "[REDACTED " in state.issue_text
@@ -200,7 +267,7 @@ def _safety_checks(state: TaskState) -> str:
     )
     return "\n".join(
         [
-            "- Command policy: passed",
+            f"- Command policy: {command_policy}",
             f"- Patch policy: {patch_policy}",
             f"- Secret filter: {secret_status}",
             f"- High-risk paths: {high_risk}",

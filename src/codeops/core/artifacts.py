@@ -3,6 +3,7 @@
 import json
 from datetime import date, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 from pydantic import BaseModel
@@ -13,27 +14,38 @@ from codeops.core.paths import RunPaths
 class ArtifactWriter:
     """Write run artifacts under `.runs/<task_id>/`."""
 
-    def __init__(self, paths: RunPaths) -> None:
+    def __init__(self, paths: RunPaths, *, atomic: bool = False) -> None:
         self.paths = paths
+        self.atomic = atomic
 
     def write_json(self, artifact_name: str, data: Any) -> Path:
-        path = self.paths.artifact_path(artifact_name)
-        self.paths.ensure()
-        path.write_text(
-            json.dumps(_to_jsonable(data), indent=2, sort_keys=True) + "\n"
+        return self._write(
+            artifact_name, json.dumps(_to_jsonable(data), indent=2, sort_keys=True) + "\n"
         )
-        return path
 
     def write_yaml(self, artifact_name: str, data: Any) -> Path:
-        path = self.paths.artifact_path(artifact_name)
-        self.paths.ensure()
-        path.write_text(_to_yaml(_to_jsonable(data)))
-        return path
+        return self._write(artifact_name, _to_yaml(_to_jsonable(data)))
 
     def write_markdown(self, artifact_name: str, content: str) -> Path:
+        return self._write(artifact_name, content)
+
+    def write_html(self, artifact_name: str, content: str) -> Path:
+        return self._write(artifact_name, content)
+
+    def _write(self, artifact_name: str, content: str) -> Path:
         path = self.paths.artifact_path(artifact_name)
         self.paths.ensure()
-        path.write_text(content)
+        if self.atomic:
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as output:
+                pending = Path(output.name)
+                try:
+                    output.write(content)
+                    output.close()
+                    pending.replace(path)
+                finally:
+                    pending.unlink(missing_ok=True)
+        else:
+            path.write_text(content)
         return path
 
 

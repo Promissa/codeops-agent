@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Trust report · $task_id</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f1f5f7; --panel: #fff; --text: #18272d; --quiet: #48616c;
+  --line: #b5c6ce; --accent: #056c66; --ok: #22763e; --bad: #b22d37;
+  --warn: #805903; --node: #f5f8fa;
+  font: 16px/1.5 system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121c21; --panel: #1a272e; --text: #e6eef2; --quiet: #afc1cc;
+    --line: #4e6570; --accent: #70d6c6; --ok: #82ce99; --bad: #ff9b9f;
+    --warn: #e8c275; --node: #202f37;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--text); background: var(--bg); }
+main { max-width: 1150px; margin: auto; padding: clamp(14px, 4vw, 48px); }
+header { margin-bottom: 24px; }
+header p { margin: 0; color: var(--quiet); overflow-wrap: anywhere; }
+h1, h2, h3 { line-height: 1.2; margin: 0 0 .65rem; }
+h1 { font-size: clamp(1.8rem, 4vw, 2.8rem); letter-spacing: -.04em; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1rem; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 16px; padding: clamp(14px, 3vw, 24px); }
+p, ul { margin: .35rem 0 .8rem; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+.fact-grid dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr)); gap: 8px; }
+dl { margin: .7rem 0; }
+dl div { background: var(--node); border-radius: 5px; padding: 7px 10px; margin-bottom: 4px; }
+dt { color: var(--quiet); font-size: .79rem; }
+dd { margin: 0; overflow-wrap: anywhere; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 100px; border: 1px solid currentColor; font-weight: 650; font-size: .88rem; }
+.verified { color: var(--ok); }
+.regressed, .blocked { color: var(--bad); }
+.inconclusive { color: var(--warn); }
+.summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.columns { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; }
+.viewport { overflow: auto; max-height: 365px; border: 1px solid var(--line); border-radius: 7px; }
+svg { display: block; width: 100%; min-width: 495px; fill: var(--text); font: 14px system-ui, sans-serif; }
+#impact-evidence-graph { min-width: 820px; }
+.node rect { fill: var(--node); stroke: var(--line); }
+.node-detail { fill: var(--quiet); font-size: 12px; }
+.node.ok rect, .node.allowed rect { stroke: var(--ok); }
+.node.failed rect, .node.denied rect, .node.blocked rect { stroke: var(--bad); }
+.node.inconclusive rect, .node.warning rect { stroke: var(--warn); }
+.node[role="button"] { cursor: pointer; }
+.node[aria-pressed="true"] rect, .node:focus-visible rect { stroke: var(--accent); stroke-width: 3px; }
+.edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.parent { stroke-dasharray: 3 4; }
+.arrow { fill: var(--line); }
+pre { margin: .35rem 0 .7rem; padding: 10px; background: var(--node); border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; }
+label { display: block; margin-bottom: .65rem; }
+select, textarea, button { font: inherit; color: inherit; background: var(--node); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; }
+select, textarea { display: block; width: 100%; }
+textarea { min-height: 5rem; resize: vertical; }
+button { cursor: pointer; margin: 0 .4rem .4rem 0; }
+summary { cursor: pointer; }
+.quiet { color: var(--quiet); font-size: .9rem; }
+@media (max-width: 740px) { .columns { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+<header><h1>CodeOps trust report</h1><p>$task_id</p></header>
+
+<section id="trust-summary" aria-labelledby="summary-title">
+  <div class="summary-heading"><h2 id="summary-title">Trust Summary</h2><span class="badge $verdict" data-verdict="$verdict">$verdict</span></div>
+  <p><strong>Intent</strong> · $intent</p>
+  <p><strong>Expected behavior</strong> · $expected</p>
+  <div class="fact-grid">$metrics</div>
+  <h3>Review findings</h3>
+  $findings
+  <details><summary>Issue input</summary><pre>$issue</pre></details>
+</section>
+
+<section id="execution" aria-labelledby="execution-title">
+  <h2 id="execution-title">Execution DAG &amp; Timeline</h2>
+  <p class="quiet">Solid arrows show sequence. Dashed lines link events to their enclosing stage.</p>
+  <div class="columns">
+    <div class="viewport" tabindex="0" aria-label="Scrollable execution timeline">$timeline</div>
+    <div><h3>Node Inspector</h3><pre id="node-inspector" aria-live="polite">Select a node to inspect its event.</pre></div>
+  </div>
+</section>
+
+<section id="impact" aria-labelledby="impact-title">
+  <h2 id="impact-title">Impact &amp; Evidence</h2>
+  <div class="viewport" tabindex="0" aria-label="Scrollable impact and evidence graph">$impact</div>
+  <p class="quiet">Links show shared paths. Green and red test nodes show command outcomes. Amber and gray indicate unobserved impact or checks.</p>
+</section>
+
+<section id="data-boundary-flow" aria-labelledby="boundary-title">
+  <h2 id="boundary-title">Data &amp; Boundary Flow</h2>
+  <div class="columns">
+    <div><h3>Workspace → outbound scope</h3>$boundary_scope</div>
+    <div><h3>Boundary decisions and filters</h3>$boundary_events</div>
+  </div>
+</section>
+
+<section id="feedback" aria-labelledby="feedback-title">
+  <h2 id="feedback-title">Feedback / Annotation</h2>
+  <div class="columns">
+    <div>
+      <label>Annotation target<select id="annotation-node"><option value="">Overall summary</option>$node_options</select></label>
+      <label>Category<select id="annotation-category">
+        <option value="auto">Automatic</option><option value="workflow">Workflow</option>
+        <option value="policy">Policy</option><option value="memory">Memory</option>
+        <option value="ephemeral">Ephemeral</option>
+      </select></label>
+      <label>Comment<textarea id="annotation-comment"></textarea></label>
+      <button type="button" id="export-feedback">Export feedback JSON</button>
+    </div>
+    <div>
+      <h3>Feedback JSON preview</h3><pre id="feedback-preview"></pre>
+      <h3>Feedback command</h3>
+      <pre id="feedback-command"></pre>
+      <button type="button" id="copy-feedback">Copy command</button>
+      <span id="feedback-status" role="status"></span>
+    </div>
+  </div>
+</section>
+
+<section id="evolved-rules" aria-labelledby="evolved-title">
+  <h2 id="evolved-title">Active Evolved Rules / Skills</h2>
+  $evolution
+</section>
+
+<script type="application/json" id="trace-data">$data</script>
+<script>
+const data = JSON.parse(document.getElementById("trace-data").textContent);
+const events = new Map(data.events.map(event => [event.event_id, event]));
+const nodes = Array.from(document.querySelectorAll("[data-event-id]"));
+const target = document.getElementById("annotation-node");
+const category = document.getElementById("annotation-category");
+const comment = document.getElementById("annotation-comment");
+const preview = document.getElementById("feedback-preview");
+const command = document.getElementById("feedback-command");
+const status = document.getElementById("feedback-status");
+
+function shellQuote(value) {
+  return "'" + value.replaceAll("'", "'\"'\"'") + "'";
+}
+
+function updateFeedback() {
+  const feedback = {
+    schema_version: 1, run_dir: data.run_dir, task_id: data.task_id,
+    event_id: target.value || null, kind: category.value, comment: comment.value
+  };
+  preview.textContent = JSON.stringify(feedback, null, 2);
+  command.textContent = "codeops feedback --run " + shellQuote(feedback.run_dir)
+    + " --comment " + shellQuote(feedback.comment)
+    + (feedback.event_id ? " --node " + shellQuote(feedback.event_id) : "")
+    + " --kind " + shellQuote(feedback.kind);
+}
+
+function inspect(eventId) {
+  const event = events.get(eventId);
+  document.getElementById("node-inspector").textContent = event
+    ? JSON.stringify(event, null, 2) : "Overall summary selected.";
+  target.value = eventId;
+  nodes.forEach(node => node.setAttribute("aria-pressed", String(node.dataset.eventId === eventId)));
+  updateFeedback();
+}
+
+nodes.forEach(node => {
+  node.setAttribute("aria-pressed", "false");
+  node.addEventListener("click", () => inspect(node.dataset.eventId));
+  node.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      inspect(node.dataset.eventId);
+    }
+  });
+});
+target.addEventListener("change", () => inspect(target.value));
+category.addEventListener("change", updateFeedback);
+comment.addEventListener("input", updateFeedback);
+
+document.getElementById("export-feedback").addEventListener("click", () => {
+  const url = URL.createObjectURL(new Blob([preview.textContent + "\n"], {type: "application/json"}));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "codeops-feedback.json";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+document.getElementById("copy-feedback").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(command.textContent);
+    status.textContent = "Copied.";
+  } catch {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(command);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    status.textContent = "Command selected. Copy it with your keyboard.";
+  }
+});
+
+updateFeedback();
+</script>
+</main>
+</body>
+</html>

@@ -24,10 +24,26 @@ from codeops.safety.secret_filter import SecretFilter
 
 
 KIMI_BASE_URL = "https://api.moonshot.cn/v1"
+KIMI_GLOBAL_BASE_URL = "https://api.moonshot.ai/v1"
 KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/"
+KIMI_CODE_GLOBAL_BASE_URL = "https://api.kimi.ai/coding/"
 DEFAULT_KIMI_MODEL = "kimi-k2.6"
 DEFAULT_KIMI_CODE_MODEL = "kimi-for-coding"
 ANTHROPIC_VERSION = "2023-06-01"
+LLM_CONFIG_PATH = Path(".codeops/llm.yaml")
+KIMI_PLATFORM_MODELS = (
+    "kimi-k2.6",
+    "kimi-k3",
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+)
+KIMI_CODE_MODEL_ALIASES = {
+    "kimi-2.8": DEFAULT_KIMI_CODE_MODEL,
+    "kimi-k2.8": DEFAULT_KIMI_CODE_MODEL,
+    "kimi-k2.8-preview": DEFAULT_KIMI_CODE_MODEL,
+    "k2.8": DEFAULT_KIMI_CODE_MODEL,
+    "k2.8-preview": DEFAULT_KIMI_CODE_MODEL,
+}
 
 
 class LLMProviderConfig(BaseModel):
@@ -54,6 +70,163 @@ class LLMProviderConfig(BaseModel):
         return " or ".join(dict.fromkeys(names))
 
 
+class LLMConfigFile(BaseModel):
+    """Non-secret persisted harness LLM configuration (`.codeops/llm.yaml`)."""
+
+    model_config = {"extra": "forbid"}
+
+    provider: str = "kimi"
+    model: str = DEFAULT_KIMI_MODEL
+    base_url: str = KIMI_BASE_URL
+    api_key_env: str = "MOONSHOT_API_KEY"
+    api_protocol: str = "openai"
+    max_completion_tokens: int = Field(default=4096, gt=0)
+    timeout_seconds: float = Field(default=60.0, gt=0)
+
+    def to_yaml(self) -> str:
+        return self.model_dump_json(indent=2) + "\n"
+
+    @classmethod
+    def parse(cls, contents: str) -> "LLMConfigFile":
+        try:
+            return cls.model_validate(json.loads(contents))
+        except json.JSONDecodeError:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise ToolError(
+                    "Use JSON-compatible YAML in .codeops/llm.yaml."
+                ) from exc
+            try:
+                return cls.model_validate(yaml.safe_load(contents))
+            except Exception as exc:
+                raise ToolError(f"Invalid .codeops/llm.yaml: {exc}") from exc
+        except Exception as exc:
+            raise ToolError(f"Invalid .codeops/llm.yaml: {exc}") from exc
+
+
+def load_llm_config_file(repo_path: Path) -> LLMConfigFile | None:
+    path = repo_path.resolve() / LLM_CONFIG_PATH
+    if not path.is_file():
+        return None
+    return LLMConfigFile.parse(path.read_text(encoding="utf-8"))
+
+
+def save_llm_config_file(repo_path: Path, config: LLMConfigFile) -> Path:
+    path = repo_path.resolve() / LLM_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(config.to_yaml(), encoding="utf-8")
+    return path
+
+
+def build_llm_config_file(
+    *,
+    provider: str = "kimi",
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+    max_completion_tokens: int = 4096,
+) -> LLMConfigFile:
+    resolved = llm_config_from_request(
+        TaskRequest(
+            repo_path=Path("."),
+            issue_path=Path("."),
+            out_path=Path("."),
+            llm_provider=provider,
+            llm_model=model,
+            llm_base_url=base_url,
+            llm_api_key_env=api_key_env,
+            llm_max_completion_tokens=max_completion_tokens,
+        )
+    )
+    if resolved is None:
+        raise ToolError("Cannot persist disabled LLM provider 'none'.")
+    return LLMConfigFile(
+        provider=resolved.provider,
+        model=resolved.model,
+        base_url=resolved.base_url,
+        api_key_env=resolved.api_key_env,
+        api_protocol=resolved.api_protocol,
+        max_completion_tokens=resolved.max_completion_tokens,
+        timeout_seconds=resolved.timeout_seconds,
+    )
+
+
+def resolve_llm_request_overrides(
+    repo_path: Path,
+    *,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
+    llm_base_url: str | None = None,
+    llm_api_key_env: str | None = None,
+    llm_max_completion_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Merge CLI flags > repo `.codeops/llm.yaml` > `CODEOPS_LLM_PROVIDER` > disabled."""
+    stored = load_llm_config_file(repo_path)
+    if llm_provider is not None:
+        normalized = llm_provider.strip().lower()
+        if normalized in {"", "none", "off", "disabled"}:
+            return {
+                "llm_provider": "none",
+                "llm_model": llm_model,
+                "llm_base_url": llm_base_url,
+                "llm_api_key_env": llm_api_key_env,
+                "llm_max_completion_tokens": llm_max_completion_tokens or 4096,
+            }
+        provider = llm_provider
+        use_stored = stored is not None and stored.provider == _canonical_provider(provider)
+    elif stored is not None:
+        provider = stored.provider
+        use_stored = True
+    else:
+        provider = os.environ.get("CODEOPS_LLM_PROVIDER", "").strip() or "none"
+        use_stored = False
+
+    return {
+        "llm_provider": provider,
+        "llm_model": llm_model if llm_model is not None else (stored.model if use_stored and stored else None),
+        "llm_base_url": llm_base_url if llm_base_url is not None else (stored.base_url if use_stored and stored else None),
+        "llm_api_key_env": llm_api_key_env if llm_api_key_env is not None else (stored.api_key_env if use_stored and stored else None),
+        "llm_max_completion_tokens": (
+            llm_max_completion_tokens
+            if llm_max_completion_tokens is not None
+            else (stored.max_completion_tokens if use_stored and stored else 4096)
+        ),
+    }
+
+
+def _normalize_kimi_code_model(model: str) -> str:
+    return KIMI_CODE_MODEL_ALIASES.get(model.strip().lower(), model)
+
+
+def _canonical_provider(name: str) -> str:
+    lowered = name.strip().lower()
+    if lowered in {
+        "kimi",
+        "moonshot",
+        "moonshotai",
+        "moonshotai-cn",
+        "kimi-platform",
+        "kimi-platform-cn",
+        "kimi-platform-global",
+        "kimi-global",
+    }:
+        return "kimi"
+    if lowered in {
+        "kimi-code",
+        "kimi_code",
+        "kimi-code-ai",
+        "kimi_code_ai",
+        "kimi-code-plan-cn",
+        "kimi-code-plan-global",
+        "kimi-code-global",
+    }:
+        return "kimi-code"
+    if lowered in {"openai-compatible", "openai_compatible"}:
+        return "openai-compatible"
+    return lowered
+
+
 class LLMPatchResult(BaseModel):
     patch_diff: str
     input_tokens: int = 0
@@ -70,7 +243,13 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
     if provider in {"", "none", "off", "disabled"}:
         return None
 
-    if provider in {"kimi", "moonshot"}:
+    if provider in {
+        "kimi",
+        "moonshot",
+        "moonshotai-cn",
+        "kimi-platform",
+        "kimi-platform-cn",
+    }:
         return LLMProviderConfig(
             provider="kimi",
             model=_first_value(request.llm_model, "CODEOPS_LLM_MODEL", "KIMI_MODEL")
@@ -85,22 +264,75 @@ def llm_config_from_request(request: TaskRequest) -> LLMProviderConfig | None:
             max_completion_tokens=request.llm_max_completion_tokens,
         )
 
-    if provider in {"kimi-code", "kimi_code", "kimi-code-ai", "kimi_code_ai"}:
+    if provider in {"moonshotai", "kimi-global", "kimi-platform-global"}:
         return LLMProviderConfig(
-            provider="kimi-code",
-            model=_first_value(
+            provider="kimi",
+            model=_first_value(request.llm_model, "CODEOPS_LLM_MODEL", "KIMI_MODEL")
+            or DEFAULT_KIMI_MODEL,
+            base_url=_first_value(
+                request.llm_base_url,
+                "CODEOPS_LLM_BASE_URL",
+                "KIMI_BASE_URL",
+            )
+            or KIMI_GLOBAL_BASE_URL,
+            api_key_env=request.llm_api_key_env or "MOONSHOT_API_KEY",
+            max_completion_tokens=request.llm_max_completion_tokens,
+        )
+
+    if provider in {
+        "kimi-code",
+        "kimi_code",
+        "kimi-code-ai",
+        "kimi_code_ai",
+        "kimi-code-plan-cn",
+    }:
+        raw_model = (
+            _first_value(
                 request.llm_model,
                 "CODEOPS_LLM_MODEL",
                 "KIMI_CODE_MODEL",
                 "KIMI_MODEL",
             )
-            or DEFAULT_KIMI_CODE_MODEL,
+            or DEFAULT_KIMI_CODE_MODEL
+        )
+        return LLMProviderConfig(
+            provider="kimi-code",
+            model=_normalize_kimi_code_model(raw_model),
             base_url=_first_value(
                 request.llm_base_url,
                 "CODEOPS_LLM_BASE_URL",
                 "KIMI_CODE_BASE_URL",
             )
             or KIMI_CODE_BASE_URL,
+            api_key_env=request.llm_api_key_env or "KIMI_API_KEY",
+            api_protocol=_first_value(
+                None,
+                "CODEOPS_LLM_API_PROTOCOL",
+                "KIMI_CODE_API_PROTOCOL",
+            )
+            or "anthropic",
+            max_completion_tokens=request.llm_max_completion_tokens,
+        )
+
+    if provider in {"kimi-code-plan-global", "kimi-code-global"}:
+        raw_model = (
+            _first_value(
+                request.llm_model,
+                "CODEOPS_LLM_MODEL",
+                "KIMI_CODE_MODEL",
+                "KIMI_MODEL",
+            )
+            or DEFAULT_KIMI_CODE_MODEL
+        )
+        return LLMProviderConfig(
+            provider="kimi-code",
+            model=_normalize_kimi_code_model(raw_model),
+            base_url=_first_value(
+                request.llm_base_url,
+                "CODEOPS_LLM_BASE_URL",
+                "KIMI_CODE_BASE_URL",
+            )
+            or KIMI_CODE_GLOBAL_BASE_URL,
             api_key_env=request.llm_api_key_env or "KIMI_API_KEY",
             api_protocol=_first_value(
                 None,
@@ -321,13 +553,15 @@ def _prompt(
             )
         )
 
+    # Run-local evolution guidance is outside the approved outbound file scope.
+    outbound_fields = {"evolution_guidance"}
     return "\n\n".join(
         [
             "Generate a minimal patch for this AcceptanceContract and ImpactEnvelope.",
             "Return only unified diff text.",
             "Do not add dependencies, do not change build files, and do not change public APIs unless explicitly allowed.",
-            f"AcceptanceContract JSON:\n{acceptance_contract.model_dump_json(indent=2)}",
-            f"PatchPlan JSON:\n{patch_plan.model_dump_json(indent=2)}",
+            f"AcceptanceContract JSON:\n{acceptance_contract.model_dump_json(indent=2, exclude=outbound_fields)}",
+            f"PatchPlan JSON:\n{patch_plan.model_dump_json(indent=2, exclude=outbound_fields)}",
             f"ImpactEnvelope JSON:\n{impact_envelope.model_dump_json(indent=2)}",
             "Allowed file contents:",
             "\n\n".join(context_parts) or "No readable allowed files were found.",

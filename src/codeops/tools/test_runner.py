@@ -1,12 +1,15 @@
 """Allowlisted local test runner."""
 
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 from typing import Sequence
 
 from codeops.core.models import CheckCommand, TestCommand, TestResult
+from codeops.runtime.sandbox import SandboxBackend
 from codeops.safety.command_policy import CommandPolicy
 from codeops.tools.test_output_parser import parse_go_test_json
 
@@ -24,28 +27,44 @@ class TestRunner:
         repo_path: Path,
         policy: CommandPolicy | None = None,
         timeout_seconds: float = 60.0,
+        sandbox_backend: SandboxBackend | None = None,
+        pytest_probe: Path | None = None,
     ) -> None:
         self.repo_path = repo_path.resolve()
         self.policy = policy or CommandPolicy()
         self.timeout_seconds = timeout_seconds
+        self.sandbox_backend = sandbox_backend
+        self.pytest_probe = pytest_probe
 
     def run(self, command: RunnableCommand) -> TestResult:
         argv, cwd, timeout_seconds, env = self._prepare(command)
         argv = self.policy.enforce(argv)
         display_command = " ".join(argv)
-        argv = _resolve_executable(argv)
+        if self.pytest_probe is not None and (
+            argv[0] == "pytest" or argv[:3] == ["python", "-m", "pytest"]
+        ):
+            offset = 1 if argv[0] == "pytest" else 3
+            argv[offset:offset] = ["-p", self.pytest_probe.stem]
+            if self.sandbox_backend is None:
+                env = {**os.environ, **env}
+                env["PYTHONPATH"] = os.pathsep.join(filter(None, (
+                    str(self.pytest_probe.parent), env.get("PYTHONPATH"),
+                )))
         started = time.monotonic()
         try:
-            result = subprocess.run(
-                argv,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-                shell=False,
-                env=env or None,
-            )
+            if self.sandbox_backend is not None:
+                result = self.sandbox_backend.run(argv, cwd=cwd, timeout_seconds=timeout_seconds)
+            else:
+                result = subprocess.run(
+                    _resolve_executable(argv),
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                    shell=False,
+                    env=env or None,
+                )
             duration = time.monotonic() - started
             passed = result.returncode == 0
             if isinstance(command, TestCommand | CheckCommand) and command.parse_format == "go_json":
@@ -64,8 +83,8 @@ class TestRunner:
                 command=display_command,
                 passed=False,
                 exit_code=124,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "command timed out",
+                stdout=_as_text(exc.stdout),
+                stderr=_as_text(exc.stderr) or "command timed out",
                 duration_seconds=duration,
             )
         except OSError as exc:
@@ -101,8 +120,14 @@ class TestRunner:
 def _resolve_executable(argv: list[str]) -> list[str]:
     found = shutil.which(argv[0])
     if found is None:
+        if argv[0] == "pytest":
+            return [sys.executable, "-m", "pytest", *argv[1:]]
         return argv
     return [str(Path(found).resolve()), *argv[1:]]
+
+
+def _as_text(output: bytes | str | None) -> str:
+    return output.decode(errors="replace") if isinstance(output, bytes) else output or ""
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

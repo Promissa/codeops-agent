@@ -24,6 +24,9 @@ DEPENDENCY_PATTERNS = (
     "build.gradle",
     "build.gradle.kts",
     "requirements*.txt",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile*",
 )
 HIGH_RISK_PATTERNS = (
     "*/auth/*",
@@ -52,8 +55,11 @@ class PatchPolicy:
         self,
         patch_diff: str,
         impact_envelope: ImpactEnvelope,
+        *,
+        summary: PatchSummary | None = None,
     ) -> PatchPolicyResult:
-        summary = PatchTool(repo_path=Path(".")).summarize(patch_diff)
+        if summary is None:
+            summary = PatchTool(repo_path=Path(".")).summarize(patch_diff)
         violations: list[str] = []
 
         allowed_files = set(impact_envelope.allowed_files)
@@ -91,7 +97,7 @@ class PatchPolicy:
 
 
 def _is_dependency_file(path: str) -> bool:
-    return any(fnmatch(path, pattern) for pattern in DEPENDENCY_PATTERNS)
+    return any(fnmatch(Path(path).name, pattern) for pattern in DEPENDENCY_PATTERNS)
 
 
 def _is_high_risk_file(path: str) -> bool:

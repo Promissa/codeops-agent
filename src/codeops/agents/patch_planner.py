@@ -25,6 +25,7 @@ class PatchPlanner:
             tests_to_add_or_update=test_files[:1],
             expected_behavior_change=acceptance_contract.user_visible_after
             or acceptance_contract.summary,
+            evolution_guidance=acceptance_contract.evolution_guidance,
             risk_notes=[
                 "Rule-based Phase 7 patch generation only supports fixture patterns."
             ],
