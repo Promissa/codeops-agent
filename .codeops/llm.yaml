@@ -1,0 +1,9 @@
+{
+  "provider": "kimi-code",
+  "model": "kimi-for-coding",
+  "base_url": "https://api.kimi.com/coding/",
+  "api_key_env": "KIMI_API_KEY",
+  "api_protocol": "anthropic",
+  "max_completion_tokens": 4096,
+  "timeout_seconds": 60.0
+}

@@ -3,17 +3,21 @@
 from pydantic import BaseModel, Field
 
 from codeops.core.models import TaskState
-from codeops.tools.patch_tool import PatchTool
+from codeops.tools.patch_tool import PatchSummary, PatchTool
 
 
 class ReviewResult(BaseModel):
     verified: bool
     violations: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    evolved_skills: list[str] = Field(default_factory=list, exclude_if=lambda value: not value)
 
 
 class Reviewer:
     """Check whether a task has enough evidence for a PR-style result."""
+
+    def __init__(self, patch_summary: PatchSummary | None = None) -> None:
+        self.patch_summary = patch_summary
 
     def review(self, state: TaskState) -> ReviewResult:
         violations: list[str] = []
@@ -33,7 +37,7 @@ class Reviewer:
             violations.append("missing impact envelope")
 
         if state.patch_diff:
-            summary = PatchTool(".").summarize(state.patch_diff)
+            summary = self.patch_summary or PatchTool(".").summarize(state.patch_diff)
             envelope = state.impact_envelope
             if envelope is not None:
                 outside = [
@@ -63,4 +67,5 @@ class Reviewer:
             verified=not violations and not warnings,
             violations=violations,
             warnings=warnings,
+            evolved_skills=list(state.acceptance_contract.evolution_guidance) if state.acceptance_contract else [],
         )

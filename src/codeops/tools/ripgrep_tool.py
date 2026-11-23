@@ -1,6 +1,7 @@
 """Ripgrep-backed lexical search with a Python fallback."""
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,10 +21,10 @@ class SearchMatch:
 class RipgrepTool:
     """Search repository text using `rg` when available."""
 
-    def __init__(self, repo_path: Path, timeout_seconds: float = 5.0) -> None:
-        self.repo_path = repo_path.resolve()
+    def __init__(self, repo_path: Path, timeout_seconds: float = 5.0, *, preserve_root: bool = False) -> None:
+        self.repo_path = Path(os.path.abspath(repo_path)) if preserve_root else repo_path.resolve()
         self.timeout_seconds = timeout_seconds
-        self.filesystem = FilesystemTool(self.repo_path)
+        self.filesystem = None if preserve_root else FilesystemTool(self.repo_path)
 
     def search(
         self,
@@ -81,16 +82,22 @@ class RipgrepTool:
         roots = path_args or ["."]
         matches: list[SearchMatch] = []
         for root in roots:
-            resolved = self.filesystem.resolve(root)
+            if self.filesystem is None:
+                relative = Path(root)
+                if relative.is_absolute() or ".." in relative.parts:
+                    continue
+                resolved = self.repo_path / relative
+            else:
+                resolved = self.filesystem.resolve(root)
             files = [resolved] if resolved.is_file() else resolved.rglob("*")
             for path in files:
                 if len(matches) >= max_results:
                     return matches
-                if not path.is_file() or ".git" in path.parts:
+                if not path.is_file() or path.is_symlink() or ".git" in path.parts:
                     continue
                 try:
                     text = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
+                except (UnicodeDecodeError, OSError):
                     continue
                 rel_path = str(path.relative_to(self.repo_path))
                 for line_no, line in enumerate(text.splitlines(), start=1):

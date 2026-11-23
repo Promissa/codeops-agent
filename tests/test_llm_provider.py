@@ -9,13 +9,24 @@ from codeops.agents.llm_provider import (
     DEFAULT_KIMI_MODEL,
     KIMI_BASE_URL,
     KIMI_CODE_BASE_URL,
+    KIMI_CODE_GLOBAL_BASE_URL,
+    KIMI_GLOBAL_BASE_URL,
+    LLMConfigFile,
     LLMProviderConfig,
     OpenAICompatibleRoutingProvider,
     OpenAICompatiblePatchProvider,
     _post_json,
+    build_llm_config_file,
     extract_unified_diff,
     llm_config_from_request,
+    load_llm_config_file,
+    resolve_llm_request_overrides,
+    save_llm_config_file,
 )
+from typer.testing import CliRunner
+
+from codeops.cli import app
+from codeops.trust.policy import TrustPolicy
 from codeops.agents.issue_router import IssueRoutingResult, RoutingCandidate
 from codeops.core.errors import ToolError
 from codeops.core.models import (
@@ -307,6 +318,85 @@ def test_extract_unified_diff_handles_plain_and_fenced_output():
 
     assert extract_unified_diff(plain).startswith("diff --git")
     assert extract_unified_diff(fenced).startswith("diff --git")
+
+
+def test_opencode_kimi_platform_provider_aliases(monkeypatch):
+    monkeypatch.delenv("CODEOPS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("CODEOPS_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("KIMI_MODEL", raising=False)
+    monkeypatch.delenv("KIMI_BASE_URL", raising=False)
+
+    cn = llm_config_from_request(_request(llm_provider="moonshotai-cn"))
+    assert cn is not None
+    assert cn.provider == "kimi"
+    assert cn.base_url == KIMI_BASE_URL
+    assert cn.model == DEFAULT_KIMI_MODEL
+    assert cn.api_key_env == "MOONSHOT_API_KEY"
+    assert cn.api_protocol == "openai"
+
+    global_cfg = llm_config_from_request(_request(llm_provider="moonshotai", llm_model="kimi-k3"))
+    assert global_cfg is not None
+    assert global_cfg.provider == "kimi"
+    assert global_cfg.base_url == KIMI_GLOBAL_BASE_URL
+    assert global_cfg.model == "kimi-k3"
+    assert global_cfg.api_key_env == "MOONSHOT_API_KEY"
+
+    code_global = llm_config_from_request(_request(llm_provider="kimi-code-plan-global"))
+    assert code_global is not None
+    assert code_global.provider == "kimi-code"
+    assert code_global.base_url == KIMI_CODE_GLOBAL_BASE_URL
+    assert code_global.api_key_env == "KIMI_API_KEY"
+
+    k28 = llm_config_from_request(_request(llm_provider="kimi-code-plan-cn", llm_model="kimi-2.8"))
+    assert k28 is not None
+    assert k28.provider == "kimi-code"
+    assert k28.model == "kimi-for-coding"
+    assert k28.base_url == KIMI_CODE_BASE_URL
+    assert k28.api_protocol == "anthropic"
+    assert k28.api_key_env == "KIMI_API_KEY"
+
+
+def test_repo_llm_config_file_roundtrip_precedence_and_secret_rejection(tmp_path, monkeypatch):
+    monkeypatch.delenv("CODEOPS_LLM_PROVIDER", raising=False)
+    config = build_llm_config_file(provider="moonshotai-cn", model="kimi-k2.6")
+    saved = save_llm_config_file(tmp_path, config)
+    assert saved == tmp_path / ".codeops" / "llm.yaml"
+
+    loaded = load_llm_config_file(tmp_path)
+    assert loaded == config
+    assert TrustPolicy().denies_read(".codeops/llm.yaml")
+
+    from_file = resolve_llm_request_overrides(tmp_path)
+    assert from_file["llm_provider"] == "kimi"
+    assert from_file["llm_base_url"] == KIMI_BASE_URL
+    assert from_file["llm_model"] == "kimi-k2.6"
+    assert from_file["llm_api_key_env"] == "MOONSHOT_API_KEY"
+
+    disabled = resolve_llm_request_overrides(tmp_path, llm_provider="none")
+    assert disabled["llm_provider"] == "none"
+
+    with pytest.raises(ToolError, match="Invalid .codeops/llm.yaml"):
+        LLMConfigFile.parse('{"provider": "kimi", "api_key": "sk-never-store"}')
+
+
+def test_cli_llm_init_and_llm_show_hide_secret_values(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOONSHOT_API_KEY", "sk-secret-value-never-print")
+    runner = CliRunner()
+
+    init_res = runner.invoke(
+        app,
+        ["llm-init", "--repo", str(tmp_path), "--provider", "moonshotai-cn", "--model", "kimi-k2.6"],
+    )
+    assert init_res.exit_code == 0, init_res.output
+    assert (tmp_path / ".codeops" / "llm.yaml").is_file()
+
+    show_res = runner.invoke(app, ["llm-show", "--repo", str(tmp_path)])
+    assert show_res.exit_code == 0, show_res.output
+    assert "provider: kimi" in show_res.output
+    assert "model: kimi-k2.6" in show_res.output
+    assert "base_url: https://api.moonshot.cn/v1" in show_res.output
+    assert "api_key_env: MOONSHOT_API_KEY (set=True)" in show_res.output
+    assert "sk-secret-value-never-print" not in show_res.output
 
 
 def _request(**updates) -> TaskRequest:

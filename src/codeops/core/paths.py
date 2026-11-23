@@ -6,6 +6,7 @@ from pathlib import Path
 
 ARTIFACT_FILENAMES = {
     "task": "task.json",
+    "trust_contract": "trust_contract.yaml",
     "repo_sketch": "repo_sketch.md",
     "repo_sketch_json": "repo_sketch.json",
     "issue_routing": "issue_routing.json",
@@ -16,10 +17,16 @@ ARTIFACT_FILENAMES = {
     "verification_plan": "verification_plan.yaml",
     "patch": "patch.diff",
     "test_results": "test_results.json",
+    "workspace_diff": "workspace_diff.json",
+    "effect_map": "effect_map.json",
+    "differential_results": "differential_results.json",
+    "evidence_gate": "evidence_gate.json",
     "evidence_matrix": "evidence_matrix.md",
     "intent_manifest": "intent_manifest.md",
     "cost_trace": "cost_trace.json",
     "final_report": "final_report.md",
+    "trace_events": "trace_events.jsonl",
+    "trace_report": "trace_report.html",
 }
 
 
@@ -45,3 +52,11 @@ class RunPaths:
     def artifact_path(self, artifact_name: str) -> Path:
         filename = ARTIFACT_FILENAMES.get(artifact_name, artifact_name)
         return self.run_dir / filename
+
+    @property
+    def trace_events_path(self) -> Path:
+        return self.artifact_path("trace_events")
+
+    @property
+    def trace_report_path(self) -> Path:
+        return self.artifact_path("trace_report")

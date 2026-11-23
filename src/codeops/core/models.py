@@ -6,6 +6,8 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from codeops.runtime.lifecycle import RunLifecycleState, TerminationReason
+
 
 TaskStatus = Literal[
     "created",
@@ -21,6 +23,7 @@ TaskStatus = Literal[
     "failed",
     "needs_clarification",
 ]
+TrustVerdict = Literal["verified", "regressed", "inconclusive", "blocked"]
 
 
 class TaskRequest(BaseModel):
@@ -33,6 +36,11 @@ class TaskRequest(BaseModel):
     out_path: Path
     retrieval_mode: str = "codegraph"
     no_network: bool = False
+    sandbox_mode: Literal["none", "bwrap"] = Field(
+        default="none", exclude_if=lambda value: value == "none",
+    )
+    trust_policy_path: Path | None = Field(default=None, exclude_if=lambda value: value is None)
+    trust_approved: bool = Field(default=False, exclude_if=lambda value: not value)
     llm_provider: str = "none"
     llm_model: str | None = None
     llm_base_url: str | None = None
@@ -55,6 +63,7 @@ class AcceptanceContract(BaseModel):
     invariants: list[str] = Field(default_factory=list)
     non_goals: list[str] = Field(default_factory=list)
     ambiguity_questions: list[str] = Field(default_factory=list)
+    evolution_guidance: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
     status: Literal["ready", "needs_clarification"]
 
 
@@ -154,6 +163,7 @@ class PatchPlan(BaseModel):
     tests_to_add_or_update: list[str] = Field(default_factory=list)
     expected_behavior_change: str
     risk_notes: list[str] = Field(default_factory=list)
+    evolution_guidance: dict[str, str] = Field(default_factory=dict, exclude_if=lambda value: not value)
 
 
 CommandScope = Literal["acceptance", "affected", "module", "full"]
@@ -210,6 +220,9 @@ class TestResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     duration_seconds: float = 0.0
+    execution_outcome: Literal["passed", "failed", "unobserved"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
 
 class CostTrace(BaseModel):
@@ -230,6 +243,13 @@ class TaskState(BaseModel):
     issue_path: Path | None = None
     issue_text: str
     run_dir: Path
+    sandbox_mode: Literal["none", "bwrap"] = "none"
+    trust_policy_path: Path | None = None
+    lifecycle_state: RunLifecycleState | None = None
+    termination_reason: TerminationReason | None = None
+    verdict: TrustVerdict | None = None
+    trace_events_path: Path | None = None
+    trace_report_path: Path | None = None
     project_profile: ProjectProfile | None = None
     status: TaskStatus = "created"
     acceptance_contract: AcceptanceContract | None = None
